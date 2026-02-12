@@ -61,4 +61,13 @@ page = { path = "crates/page" }
 js_lexer = { path = "crates/js_lexer" }
 js_parser = { path = "crates/js_parser" }
 js_ast = { path = "crates/js_ast" }
+js_bytecode = { path = "crates/js_bytecode" }
+js_vm = { path = "crates/js_vm" }
+js_gc = { path = "crates/js_gc" }
 url_parser = { path = "crates/url_parser" }
+net = { path = "crates/net" }
+scheduler = { path = "crates/scheduler" }
+loader = { path = "crates/loader" }
+encoding = { path = "crates/encoding" }
+image_decode = { path = "crates/image_decode" }
+font = { path = "crates/font" }
