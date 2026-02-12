@@ -6,6 +6,9 @@
 
 #![forbid(unsafe_code)]
 
+pub mod canvas;
+pub mod promise;
+
 use std::collections::HashMap;
 
 // ─────────────────────────────────────────────────────────────────────────────

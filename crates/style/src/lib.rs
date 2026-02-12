@@ -3,6 +3,7 @@
 //! Selector matching, cascade resolution, and computed style values.
 //! Zero external dependencies beyond sibling workspace crates.
 
+pub mod animation;
 pub mod computed;
 pub mod matching;
 pub mod cascade;

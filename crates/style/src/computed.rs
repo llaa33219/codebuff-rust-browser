@@ -223,6 +223,78 @@ impl Default for FlexStyle {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Grid properties
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A breadth value used in grid track sizing (e.g. inside `minmax()`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum GridBreadth {
+    Fixed(f32),
+    Fr(f32),
+    Auto,
+    MinContent,
+    MaxContent,
+}
+
+impl Default for GridBreadth {
+    fn default() -> Self {
+        GridBreadth::Auto
+    }
+}
+
+/// A grid track size.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GridTrackSize {
+    Fixed(f32),
+    Fr(f32),
+    Auto,
+    MinMax(GridBreadth, GridBreadth),
+}
+
+impl Default for GridTrackSize {
+    fn default() -> Self {
+        GridTrackSize::Auto
+    }
+}
+
+/// Controls the auto-placement algorithm direction and density.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GridAutoFlow {
+    Row,
+    Column,
+    RowDense,
+    ColumnDense,
+}
+
+impl Default for GridAutoFlow {
+    fn default() -> Self {
+        GridAutoFlow::Row
+    }
+}
+
+/// Grid-related computed style properties.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GridStyle {
+    pub template_columns: Vec<GridTrackSize>,
+    pub template_rows: Vec<GridTrackSize>,
+    pub auto_flow: GridAutoFlow,
+    pub column_gap: f32,
+    pub row_gap: f32,
+}
+
+impl Default for GridStyle {
+    fn default() -> Self {
+        Self {
+            template_columns: Vec::new(),
+            template_rows: Vec::new(),
+            auto_flow: GridAutoFlow::Row,
+            column_gap: 0.0,
+            row_gap: 0.0,
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // BorderSide
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -283,6 +355,9 @@ pub struct ComputedStyle {
     // -- Flexbox --
     pub flex: FlexStyle,
 
+    // -- Grid --
+    pub grid: GridStyle,
+
     // -- Stacking --
     pub z_index: Option<i32>,
 
@@ -327,6 +402,8 @@ impl Default for ComputedStyle {
             max_height: None,
 
             flex: FlexStyle::default(),
+
+            grid: GridStyle::default(),
 
             z_index: None,
 

@@ -10,6 +10,7 @@
 pub mod deflate;
 pub mod png;
 pub mod jpeg;
+pub mod webp;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Image — common decoded image type
@@ -60,6 +61,9 @@ impl Image {
 pub enum ImageFormat {
     Png,
     Jpeg,
+    WebP,
+    Gif,
+    Bmp,
     Unknown,
 }
 
@@ -69,6 +73,12 @@ pub fn detect_format(data: &[u8]) -> ImageFormat {
         ImageFormat::Png
     } else if data.len() >= 2 && data[0] == 0xFF && data[1] == 0xD8 {
         ImageFormat::Jpeg
+    } else if data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+        ImageFormat::WebP
+    } else if data.len() >= 6 && &data[0..3] == b"GIF" {
+        ImageFormat::Gif
+    } else if data.len() >= 2 && data[0] == b'B' && data[1] == b'M' {
+        ImageFormat::Bmp
     } else {
         ImageFormat::Unknown
     }
@@ -79,6 +89,9 @@ pub fn decode(data: &[u8]) -> Result<Image, common::ParseError> {
     match detect_format(data) {
         ImageFormat::Png => png::decode_png(data),
         ImageFormat::Jpeg => jpeg::decode_jpeg(data),
+        ImageFormat::WebP => webp::decode_webp(data),
+        ImageFormat::Gif => webp::decode_gif(data),
+        ImageFormat::Bmp => webp::decode_bmp(data),
         ImageFormat::Unknown => Err(common::ParseError::InvalidValue("unknown image format")),
     }
 }
@@ -124,6 +137,27 @@ mod tests {
     fn detect_jpeg() {
         let jpeg_header = [0xFF, 0xD8, 0xFF, 0xE0];
         assert_eq!(detect_format(&jpeg_header), ImageFormat::Jpeg);
+    }
+
+    #[test]
+    fn detect_webp() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"RIFF");
+        buf.extend_from_slice(&100u32.to_le_bytes());
+        buf.extend_from_slice(b"WEBP");
+        assert_eq!(detect_format(&buf), ImageFormat::WebP);
+    }
+
+    #[test]
+    fn detect_gif() {
+        let gif_header = b"GIF89a";
+        assert_eq!(detect_format(gif_header), ImageFormat::Gif);
+    }
+
+    #[test]
+    fn detect_bmp() {
+        let bmp_header = [b'B', b'M', 0, 0, 0, 0];
+        assert_eq!(detect_format(&bmp_header), ImageFormat::Bmp);
     }
 
     #[test]
