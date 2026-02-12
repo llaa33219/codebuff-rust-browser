@@ -1,0 +1,8 @@
+[package]
+name = "js_parser"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+js_lexer = { path = "../js_lexer" }
+js_ast = { path = "../js_ast" }

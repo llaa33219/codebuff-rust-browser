@@ -1,0 +1,64 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/common",
+    "crates/arena",
+    "crates/url_parser",
+    "crates/encoding",
+    "crates/platform_linux",
+    "crates/crypto",
+    "crates/dns",
+    "crates/tls",
+    "crates/http1",
+    "crates/http2",
+    "crates/cookie",
+    "crates/net",
+    "crates/html",
+    "crates/css",
+    "crates/dom",
+    "crates/style",
+    "crates/layout",
+    "crates/paint",
+    "crates/gfx_vulkan",
+    "crates/font",
+    "crates/image_decode",
+    "crates/js_lexer",
+    "crates/js_parser",
+    "crates/js_ast",
+    "crates/js_bytecode",
+    "crates/js_vm",
+    "crates/js_gc",
+    "crates/js_builtins",
+    "crates/js_dom_bindings",
+    "crates/scheduler",
+    "crates/loader",
+    "crates/page",
+    "crates/shell",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[package]
+name = "rust_browser"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+common = { path = "crates/common" }
+arena = { path = "crates/arena" }
+html = { path = "crates/html" }
+css = { path = "crates/css" }
+dom = { path = "crates/dom" }
+style = { path = "crates/style" }
+layout = { path = "crates/layout" }
+paint = { path = "crates/paint" }
+crypto = { path = "crates/crypto" }
+shell = { path = "crates/shell" }
+page = { path = "crates/page" }
+js_lexer = { path = "crates/js_lexer" }
+js_parser = { path = "crates/js_parser" }
+js_ast = { path = "crates/js_ast" }
+url_parser = { path = "crates/url_parser" }

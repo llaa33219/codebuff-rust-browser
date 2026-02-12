@@ -1,0 +1,12 @@
+[package]
+name = "paint"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+common = { path = "../common" }
+arena = { path = "../arena" }
+dom = { path = "../dom" }
+css = { path = "../css" }
+style = { path = "../style" }
+layout = { path = "../layout" }

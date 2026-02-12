@@ -1,0 +1,9 @@
+[package]
+name = "js_vm"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+js_bytecode = { path = "../js_bytecode" }
+js_gc = { path = "../js_gc" }
+js_ast = { path = "../js_ast" }

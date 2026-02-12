@@ -1,0 +1,13 @@
+[package]
+name = "net"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+common = { path = "../common" }
+dns = { path = "../dns" }
+tls = { path = "../tls" }
+http1 = { path = "../http1" }
+http2 = { path = "../http2" }
+cookie = { path = "../cookie" }
+url_parser = { path = "../url_parser" }
