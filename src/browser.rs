@@ -26,6 +26,71 @@ use crate::hittest;
 /// Document root node ID (index 0, generation 0).
 const DOC_ROOT: NodeId = GenIndex { index: 0, generation: 0 };
 
+/// Default user-agent stylesheet.
+const UA_CSS: &str = "
+    html, body { display: block; margin: 0; padding: 0; }
+    head, title, meta, link, style, script { display: none; }
+    div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, section, article,
+    nav, header, footer, main, aside, figure, figcaption,
+    blockquote, pre, hr, form, fieldset, table { display: block; }
+    h1 { font-size: 32px; font-weight: bold; margin: 16px 0; }
+    h2 { font-size: 24px; font-weight: bold; margin: 12px 0; }
+    h3 { font-size: 18px; font-weight: bold; margin: 10px 0; }
+    p  { margin: 8px 0; }
+    ul, ol { margin: 8px 0; padding: 0 0 0 24px; }
+    li { display: block; margin: 4px 0; }
+    a { color: #0066cc; }
+    body { font-size: 16px; color: #333333; background-color: #ffffff; }
+    img { display: block; }
+";
+
+/// Built-in homepage shown for new tabs.
+fn default_homepage_html() -> &'static str {
+    r#"<html><head><title>New Tab \u2014 Rust Browser</title>
+<style>
+body { background: #f8f9fa; color: #333; text-align: center; padding: 60px 20px; }
+h1 { font-size: 42px; color: #1a73e8; margin: 0 0 8px 0; }
+p { font-size: 17px; color: #666; margin: 8px 0; }
+.sub { font-size: 14px; color: #999; margin-top: 4px; }
+.features { text-align: left; max-width: 480px; margin: 32px auto; background: #ffffff; padding: 20px 28px; border: 1px solid #e0e0e0; }
+.features h2 { font-size: 18px; color: #333; margin: 0 0 12px 0; }
+.features li { margin: 5px 0; font-size: 14px; color: #555; }
+</style></head><body>
+<h1>Rust Browser</h1>
+<p>Built 100% from scratch in Rust</p>
+<p class="sub">Zero external dependencies</p>
+<p>Press Ctrl+L to focus the URL bar and start browsing</p>
+<div class="features"><h2>Engine Features</h2><ul>
+<li>HTML5 parser with tree construction</li>
+<li>CSS3 selector matching and cascade</li>
+<li>Block, inline, flexbox, and grid layout</li>
+<li>TrueType font rendering</li>
+<li>PNG, JPEG, WebP, GIF, BMP image decoding</li>
+<li>TLS 1.3 with AES-GCM encryption</li>
+<li>HTTP/1.1 and HTTP/2 protocols</li>
+<li>JavaScript engine with bytecode VM</li>
+<li>DNS resolver with caching</li>
+<li>Cookie management</li>
+</ul></div></body></html>"#
+}
+
+/// Styled error page shown when a fetch fails.
+fn error_page_html(url: &str, error: &str) -> String {
+    format!(
+        r#"<html><head><title>Error</title><style>
+body {{ background: #fafafa; color: #333; padding: 50px 20px; text-align: center; }}
+h1 {{ font-size: 32px; color: #d93025; margin: 0 0 12px 0; }}
+p {{ font-size: 15px; color: #666; max-width: 560px; margin: 8px auto; }}
+.url {{ font-size: 13px; color: #999; margin-top: 16px; }}
+</style></head><body>
+<h1>Page Not Available</h1>
+<p>{error}</p>
+<p class="url">{url}</p>
+<p>Check the URL and your network connection, then try again.</p>
+</body></html>"#
+    )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PageData
 // ─────────────────────────────────────────────────────────────────────────────
@@ -43,21 +108,7 @@ pub struct PageData {
     pub url: String,
 }
 
-impl PageData {
-    fn new() -> Self {
-        Self {
-            dom: Dom::new(),
-            style_map: HashMap::new(),
-            layout_tree: LayoutTree::new(),
-            display_list: Vec::new(),
-            image_store: HashMap::new(),
-            scroll_y: 0.0,
-            content_height: 0.0,
-            title: String::new(),
-            url: String::new(),
-        }
-    }
-}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // BrowserEngine
@@ -166,6 +217,13 @@ impl BrowserEngine {
     /// Navigate the initial URL (called from main after engine creation).
     pub fn navigate_initial(&mut self, url: &str) {
         self.navigate(url);
+        // For the homepage, focus the URL bar so the user can start typing.
+        if url == "about:newtab" || url.is_empty() {
+            self.chrome_state.url_text.clear();
+            self.chrome_state.url_cursor = 0;
+            self.chrome_state.url_focused = true;
+            self.needs_render = true;
+        }
     }
 
     /// Run the main event loop.
@@ -246,12 +304,11 @@ impl BrowserEngine {
             }
 
             BrowserAction::NewTab => {
-                let tab_id = self.shell.tab_manager.new_tab();
-                self.pages.insert(tab_id, PageData::new());
+                self.shell.tab_manager.new_tab();
+                self.navigate("about:newtab");
                 self.chrome_state.url_text.clear();
                 self.chrome_state.url_cursor = 0;
                 self.chrome_state.url_focused = true;
-                self.needs_render = true;
             }
 
             BrowserAction::CloseTab => {
@@ -304,6 +361,10 @@ impl BrowserEngine {
                 self.handle_click(x, y);
             }
 
+            BrowserAction::MouseMove(x, y) => {
+                self.handle_mouse_move(x, y);
+            }
+
             BrowserAction::Resize(w, h) => {
                 self.handle_resize(w, h);
             }
@@ -324,7 +385,9 @@ impl BrowserEngine {
 
     fn navigate(&mut self, url: &str) {
         // Normalize URL
-        let url = if url.contains("://") {
+        let url = if url == "about:newtab" || url == "about:blank" || url.is_empty() {
+            "about:newtab".to_string()
+        } else if url.contains("://") {
             url.to_string()
         } else if url.starts_with("localhost") || url.contains('.') {
             format!("http://{}", url)
@@ -332,10 +395,21 @@ impl BrowserEngine {
             format!("http://{}", url)
         };
 
-        self.chrome_state.url_text = url.clone();
-        self.chrome_state.url_cursor = url.len();
-        self.chrome_state.status_text = format!("Loading {}...", url);
+        self.chrome_state.url_text = if url.starts_with("about:") {
+            String::new()
+        } else {
+            url.clone()
+        };
+        self.chrome_state.url_cursor = self.chrome_state.url_text.len();
+        self.chrome_state.status_text = if url.starts_with("about:") {
+            String::new()
+        } else {
+            format!("Loading {}...", url)
+        };
         self.needs_render = true;
+
+        // Render the "Loading" state immediately so user sees feedback.
+        self.render_frame();
 
         // Update shell navigation
         self.shell.handle_nav_event(NavEvent::Go(url.clone()));
@@ -345,27 +419,27 @@ impl BrowserEngine {
         };
 
         // Fetch the page
-        let html = match self.fetch_page(&url) {
-            Ok(html) => html,
-            Err(e) => {
-                self.chrome_state.status_text = format!("Error: {}", e);
-                let error_html = format!(
-                    "<html><body><h1>Error</h1><p>Failed to load {}: {}</p></body></html>",
-                    url, e
-                );
-                error_html
+        let html = if url.starts_with("about:") {
+            default_homepage_html().to_string()
+        } else {
+            match self.fetch_page(&url) {
+                Ok(html) => html,
+                Err(e) => {
+                    self.chrome_state.status_text = format!("Error: {}", e);
+                    error_page_html(&url, &format!("{}", e))
+                }
             }
         };
 
         // Run the rendering pipeline
         let mut page_data = self.do_pipeline(&url, &html);
 
+        // Load external resources (CSS, JS) for real pages.
+        if !url.starts_with("about:") {
+            self.load_external_resources(&mut page_data);
+        }
+
         // Fetch and decode images referenced by <img> elements.
-        // NOTE: Images are appended to the end of the display list because the
-        // paint pipeline does not yet emit DisplayItem::Image for <img> layout
-        // boxes. This means images render on top of other content (wrong
-        // stacking order). A future fix should emit Image items during
-        // paint_layout_box and only populate image_store here.
         self.load_page_images(&mut page_data);
 
         // Update tab state
@@ -382,7 +456,11 @@ impl BrowserEngine {
         };
         let _ = self.x11.set_window_title(self.window, &title);
 
-        self.chrome_state.status_text = "Done".to_string();
+        self.chrome_state.status_text = if url.starts_with("about:") {
+            String::new()
+        } else {
+            "Done".to_string()
+        };
         self.pages.insert(tab_id, page_data);
         self.needs_render = true;
     }
@@ -464,22 +542,7 @@ impl BrowserEngine {
         let dom = html::parse(html_source);
 
         // Step 2: Parse default CSS + extract page styles
-        let ua_css = "
-            html, body { display: block; margin: 0; padding: 0; }
-            head, title, meta, link, style, script { display: none; }
-            div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, section, article,
-            nav, header, footer, main, aside, figure, figcaption,
-            blockquote, pre, hr, form, fieldset, table { display: block; }
-            h1 { font-size: 32px; font-weight: bold; margin: 16px 0; }
-            h2 { font-size: 24px; font-weight: bold; margin: 12px 0; }
-            h3 { font-size: 18px; font-weight: bold; margin: 10px 0; }
-            p  { margin: 8px 0; }
-            ul, ol { margin: 8px 0; padding: 0 0 0 24px; }
-            li { display: block; margin: 4px 0; }
-            a { color: #0066cc; }
-            body { font-size: 16px; color: #333333; background-color: #ffffff; }
-        ";
-        let ua_stylesheet = css::parse_stylesheet(ua_css);
+        let ua_stylesheet = css::parse_stylesheet(UA_CSS);
         let mut sheets: Vec<(css::Stylesheet, style::StyleOrigin)> = vec![
             (ua_stylesheet, style::StyleOrigin::UserAgent),
         ];
@@ -563,6 +626,9 @@ impl BrowserEngine {
             self.font_engine.as_mut(),
         );
 
+        // Draw scrollbar overlay
+        self.draw_scrollbar();
+
         // Send to X11
         let _ = self.x11.put_image(
             self.window,
@@ -591,6 +657,19 @@ impl BrowserEngine {
                         self.chrome_state.url_cursor = self.chrome_state.url_text.len();
                     }
                     self.needs_render = true;
+                }
+                ChromeHit::CloseTabButton(tab_id) => {
+                    self.pages.remove(&tab_id);
+                    self.shell.tab_manager.close_tab(tab_id);
+                    if self.shell.tab_manager.tab_count() == 0 {
+                        self.running = false;
+                    } else {
+                        if let Some(tab) = self.shell.tab_manager.active_tab() {
+                            self.chrome_state.url_text = tab.url.clone();
+                            self.chrome_state.url_cursor = self.chrome_state.url_text.len();
+                        }
+                        self.needs_render = true;
+                    }
                 }
                 ChromeHit::NewTabButton => {
                     self.handle_action(BrowserAction::NewTab);
@@ -741,6 +820,189 @@ impl BrowserEngine {
             }
         }
         self.needs_render = true;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // External resource loading
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// Load external `<link rel="stylesheet">` and `<script src>` resources,
+    /// then rebuild the style/layout pipeline.
+    fn load_external_resources(&mut self, page: &mut PageData) {
+        // 1. Collect external CSS URLs.
+        let link_elements = page.dom.get_elements_by_tag(DOC_ROOT, "link");
+        let mut external_css: Vec<String> = Vec::new();
+
+        for &link_id in &link_elements {
+            let (is_stylesheet, href) = match page.dom.nodes.get(link_id).and_then(|n| n.as_element()) {
+                Some(elem) => {
+                    let is_ss = elem.attrs.iter()
+                        .any(|a| a.name == "rel" && a.value.to_ascii_lowercase().contains("stylesheet"));
+                    let href = elem.attrs.iter()
+                        .find(|a| a.name == "href")
+                        .map(|a| a.value.clone());
+                    (is_ss, href)
+                }
+                None => continue,
+            };
+            if !is_stylesheet {
+                continue;
+            }
+            let href = match href {
+                Some(h) if !h.is_empty() => h,
+                _ => continue,
+            };
+
+            let resolved = resolve_url(&href, &page.url);
+            match self.fetch_bytes(&resolved) {
+                Ok(bytes) => {
+                    if let Ok(css_text) = String::from_utf8(bytes) {
+                        external_css.push(css_text);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("  ⚠ Failed to fetch CSS {}: {}", resolved, e);
+                }
+            }
+        }
+
+        // 2. Load and execute external scripts.
+        let script_elements = page.dom.get_elements_by_tag(DOC_ROOT, "script");
+        for &script_id in &script_elements {
+            let src = match page.dom.nodes.get(script_id).and_then(|n| n.as_element()) {
+                Some(elem) => {
+                    elem.attrs.iter()
+                        .find(|a| a.name == "src")
+                        .map(|a| a.value.clone())
+                }
+                None => continue,
+            };
+            let src = match src {
+                Some(s) if !s.is_empty() => s,
+                _ => continue,
+            };
+
+            let resolved = resolve_url(&src, &page.url);
+            match self.fetch_bytes(&resolved) {
+                Ok(bytes) => {
+                    if let Ok(js_text) = String::from_utf8(bytes) {
+                        run_js(&js_text);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("  ⚠ Failed to fetch script {}: {}", resolved, e);
+                }
+            }
+        }
+
+        // 3. If external CSS was loaded, rebuild the style + layout pipeline.
+        if !external_css.is_empty() {
+            let ua_stylesheet = css::parse_stylesheet(UA_CSS);
+            let mut sheets: Vec<(css::Stylesheet, style::StyleOrigin)> = vec![
+                (ua_stylesheet, style::StyleOrigin::UserAgent),
+            ];
+
+            // Re-add inline <style> elements.
+            let style_elements = page.dom.get_elements_by_tag(DOC_ROOT, "style");
+            for &style_id in &style_elements {
+                let children = page.dom.children(style_id);
+                for child_id in children {
+                    if let Some(node) = page.dom.nodes.get(child_id) {
+                        if let NodeData::Text { data } = &node.data {
+                            sheets.push((css::parse_stylesheet(data), style::StyleOrigin::Author));
+                        }
+                    }
+                }
+            }
+
+            // Add the fetched external stylesheets.
+            for css_text in &external_css {
+                sheets.push((css::parse_stylesheet(css_text), style::StyleOrigin::Author));
+            }
+
+            // Rebuild style map, layout, and display list.
+            page.style_map = build_style_map(&page.dom, DOC_ROOT, &sheets);
+            let content_width = self.width.saturating_sub(16) as f32;
+            let mut layout_tree = layout::build_layout_tree(&page.dom, DOC_ROOT, &page.style_map);
+            let (_, content_height) = if let Some(root_id) = layout_tree.root {
+                layout::layout_block(&mut layout_tree, root_id, content_width)
+            } else {
+                (0.0, 0.0)
+            };
+            page.display_list = paint::build_display_list(&layout_tree);
+            page.layout_tree = layout_tree;
+            page.content_height = content_height;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Mouse hover
+    // ─────────────────────────────────────────────────────────────────────
+
+    fn handle_mouse_move(&mut self, x: i32, y: i32) {
+        // Only do hit testing when the mouse is in the content area.
+        if (y as u32) < CHROME_HEIGHT
+            || (y as u32) >= self.height.saturating_sub(STATUS_BAR_HEIGHT)
+        {
+            return;
+        }
+
+        if let Some(tab_id) = self.shell.tab_manager.active_tab_id() {
+            if let Some(page) = self.pages.get(&tab_id) {
+                let doc_x = x as f32;
+                let doc_y = (y as f32 - CHROME_HEIGHT as f32) + page.scroll_y;
+
+                let result = hittest::hit_test(&page.layout_tree, &page.dom, doc_x, doc_y);
+
+                let new_status = if let Some(link_url) = result.link_url {
+                    resolve_url(&link_url, &page.url)
+                } else if page.url.starts_with("about:") {
+                    String::new()
+                } else {
+                    "Done".to_string()
+                };
+
+                if self.chrome_state.status_text != new_status {
+                    self.chrome_state.status_text = new_status;
+                    self.needs_render = true;
+                }
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Scrollbar
+    // ─────────────────────────────────────────────────────────────────────
+
+    fn draw_scrollbar(&mut self) {
+        let (content_height, scroll_y) = match self.shell.tab_manager.active_tab_id()
+            .and_then(|id| self.pages.get(&id))
+        {
+            Some(page) => (page.content_height, page.scroll_y),
+            None => return,
+        };
+
+        let viewport_h = self.height.saturating_sub(CHROME_HEIGHT + STATUS_BAR_HEIGHT) as f32;
+        if content_height <= viewport_h || content_height <= 0.0 {
+            return;
+        }
+
+        let scrollbar_w = 6u32;
+        let track_x = (self.width - scrollbar_w) as i32;
+        let track_y = CHROME_HEIGHT as i32;
+        let track_h = viewport_h as u32;
+
+        // Subtle track
+        self.framebuffer.fill_rect(track_x, track_y, scrollbar_w, track_h, 0xFF_EEEEEE);
+
+        // Thumb
+        let visible_ratio = (viewport_h / content_height).min(1.0);
+        let thumb_h = (track_h as f32 * visible_ratio).max(20.0) as u32;
+        let max_scroll = (content_height - viewport_h).max(1.0);
+        let scroll_ratio = (scroll_y / max_scroll).max(0.0).min(1.0);
+        let thumb_y = track_y + ((track_h - thumb_h) as f32 * scroll_ratio) as i32;
+
+        self.framebuffer.fill_rect(track_x, thumb_y, scrollbar_w, thumb_h, 0xFF_AAAAAA);
     }
 }
 

@@ -36,6 +36,8 @@ pub enum BrowserAction {
     Scroll(f32),
     /// Click at the given (x, y) screen coordinates.
     Click(i32, i32),
+    /// Mouse moved to the given (x, y) screen coordinates.
+    MouseMove(i32, i32),
     /// Window was resized to the given dimensions.
     Resize(u32, u32),
     /// Window needs to be redrawn (expose event).
@@ -99,6 +101,10 @@ pub fn process_x11_event(
             _ => BrowserAction::None,
         },
 
+        X11Event::MotionNotify { x, y, .. } => {
+            BrowserAction::MouseMove(*x as i32, *y as i32)
+        }
+
         X11Event::Expose { .. } => BrowserAction::Redraw,
 
         X11Event::ConfigureNotify { width, height, .. } => {
@@ -161,6 +167,11 @@ fn process_key_content_mode(key: &KeyEvent) -> BrowserAction {
         KeyEvent::Escape => BrowserAction::None,
         KeyEvent::Left => BrowserAction::Back,
         KeyEvent::Right => BrowserAction::Forward,
+        KeyEvent::Up => BrowserAction::Scroll(-40.0),
+        KeyEvent::Down => BrowserAction::Scroll(40.0),
+        KeyEvent::Home => BrowserAction::Scroll(-1_000_000.0),
+        KeyEvent::End => BrowserAction::Scroll(1_000_000.0),
+        KeyEvent::Char(' ') => BrowserAction::Scroll(400.0),
         _ => BrowserAction::None,
     }
 }

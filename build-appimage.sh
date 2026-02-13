@@ -135,6 +135,26 @@ fi
 cp "${SCRIPT_DIR}/assets/rust-browser.desktop" "${APPDIR}/usr/share/applications/rust-browser.desktop"
 info "Desktop file installed"
 
+# Bundle a system font so the browser works on any system
+mkdir -p "${APPDIR}/usr/share/fonts"
+FONT_SRC=""
+for f in /usr/share/fonts/liberation-sans-fonts/LiberationSans-Regular.ttf \
+         /usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf \
+         /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
+         /usr/share/fonts/google-droid-sans-fonts/DroidSans.ttf \
+         /usr/share/fonts/TTF/DejaVuSans.ttf; do
+    if [ -f "$f" ]; then
+        FONT_SRC="$f"
+        break
+    fi
+done
+if [ -n "${FONT_SRC}" ]; then
+    cp "${FONT_SRC}" "${APPDIR}/usr/share/fonts/LiberationSans-Regular.ttf"
+    info "Font bundled: $(basename "${FONT_SRC}")"
+else
+    warn "No system font found to bundle — text rendering may not work"
+fi
+
 # Copy icon
 cp "${SCRIPT_DIR}/assets/rust-browser.svg" "${APPDIR}/usr/share/icons/hicolor/scalable/apps/rust-browser.svg"
 info "Icon installed"

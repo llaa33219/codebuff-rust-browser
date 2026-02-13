@@ -854,82 +854,81 @@ fn demo_canvas2d() {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    if args.iter().any(|a| a == "--gui") {
-        // GUI browser mode
-        let url = args.iter()
-            .position(|a| a == "--gui")
-            .and_then(|i| args.get(i + 1))
-            .map(|s| s.as_str());
-
-        let width = 1280;
-        let height = 800;
-
-        println!("🌐 Rust Browser — starting GUI ({}×{})", width, height);
-
-        let mut engine = match browser::BrowserEngine::new(width, height) {
-            Ok(e) => e,
-            Err(e) => {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
-        };
-
-        if let Some(url) = url {
-            engine.navigate_initial(url);
-        }
-
-        engine.run();
+    // Show help.
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("Usage: rust_browser [OPTIONS] [URL]");
+        println!();
+        println!("Options:");
+        println!("  --cli     Run in CLI demo mode (non-GUI)");
+        println!("  --help    Show this help message");
+        println!();
+        println!("By default, opens the GUI browser.");
+        println!("If a URL is provided, navigates to it on startup.");
         return;
     }
 
-    println!();
-    println!("🌐 ═══════════════════════════════════════════════════════════");
-    println!("   Rust Browser Engine v0.1.0");
-    println!("   Built 100% from scratch — zero external crates");
-    println!("   33 crates • 41,000+ lines • 963 tests");
-    println!("═══════════════════════════════════════════════════════════════\n");
+    // CLI demo mode (explicit opt-in).
+    if args.iter().any(|a| a == "--cli" || a == "--demo") {
+        println!();
+        println!("🌐 ═══════════════════════════════════════════════════════════");
+        println!("   Rust Browser Engine v0.1.0");
+        println!("   Built 100% from scratch — zero external crates");
+        println!("   33 crates • 49,000+ lines • 1,000+ tests");
+        println!("═══════════════════════════════════════════════════════════════\n");
 
-    demo_rendering_pipeline();
-    demo_javascript_engine();
-    demo_network_stack();
-    demo_cryptography();
-    demo_browser_shell();
-    demo_scheduler();
-    demo_resource_loader();
-    demo_encoding();
-    demo_image_decode();
-    demo_grid_layout();
-    demo_css_animation();
-    demo_advanced_image_decode();
-    demo_promise_runtime();
-    demo_canvas2d();
+        demo_rendering_pipeline();
+        demo_javascript_engine();
+        demo_network_stack();
+        demo_cryptography();
+        demo_browser_shell();
+        demo_scheduler();
+        demo_resource_loader();
+        demo_encoding();
+        demo_image_decode();
+        demo_grid_layout();
+        demo_css_animation();
+        demo_advanced_image_decode();
+        demo_promise_runtime();
+        demo_canvas2d();
 
-    // Final summary
-    println!("═══════════════════════════════════════════════════════════════");
-    println!("  SUMMARY");
-    println!("═══════════════════════════════════════════════════════════════\n");
-    println!("   ┌─────────────────────────────────────────────────────┐");
-    println!("   │  Foundation:  common, arena, encoding, crypto       │");
-    println!("   │  Networking:  dns, net, http1, http2, tls,          │");
-    println!("   │               url_parser, cookie                    │");
-    println!("   │  Rendering:   html, dom, css, style, layout, paint  │");
-    println!("   │  Graphics:    font, image_decode, gfx_vulkan        │");
-    println!("   │  JavaScript:  js_lexer, js_parser, js_ast,          │");
-    println!("   │               js_bytecode, js_vm, js_gc,            │");
-    println!("   │               js_builtins, js_dom_bindings          │");
-    println!("   │  Browser:     shell, page, scheduler, loader,       │");
-    println!("   │               platform_linux                        │");
-    println!("   ├─────────────────────────────────────────────────────┤");
-    println!("   │  Phase 7:  CSS Grid layout, CSS Animations          │");
-    println!("   │  Phase 8:  WebP/BMP/GIF decoders, Promise runtime,  │");
-    println!("   │            Canvas 2D API                            │");
-    println!("   └─────────────────────────────────────────────────────┘");
-    println!();
-    println!("   Total crates:          33");
-    println!("   Total lines of code:   45,000+");
-    println!("   Total tests passing:   1,000+");
-    println!("   External dependencies: 0");
-    println!();
-    println!("✅ All engine components demonstrated successfully (Phase 0–8)!");
-    println!();
+        println!("═══════════════════════════════════════════════════════════════");
+        println!("  SUMMARY");
+        println!("═══════════════════════════════════════════════════════════════\n");
+        println!("   Total crates:          33");
+        println!("   Total lines of code:   49,000+");
+        println!("   Total tests passing:   1,000+");
+        println!("   External dependencies: 0");
+        println!();
+        println!("✅ All engine components demonstrated successfully!");
+        println!();
+        return;
+    }
+
+    // ── GUI browser mode (default) ──────────────────────────────────────
+
+    // Find URL: first non-flag argument (skip argv[0]).
+    let url = args.iter()
+        .skip(1)
+        .find(|a| !a.starts_with('-'))
+        .map(|s| s.as_str());
+
+    let width = 1280;
+    let height = 800;
+
+    println!("🌐 Rust Browser — starting GUI ({}×{})", width, height);
+
+    let mut engine = match browser::BrowserEngine::new(width, height) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    match url {
+        Some(u) => engine.navigate_initial(u),
+        None => engine.navigate_initial("about:newtab"),
+    }
+
+    engine.run();
 }

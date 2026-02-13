@@ -30,12 +30,14 @@ const FONT_SEARCH_PATHS: &[&str] = &[
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/google-droid-sans-fonts/DroidSans.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/liberation-sans-fonts/LiberationSans-Regular.ttf",
     "/usr/share/fonts/TTF/DejaVuSans.ttf",
     "/usr/share/fonts/noto/NotoSans-Regular.ttf",
     "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
     "/usr/share/fonts/ubuntu/Ubuntu-R.ttf",
     "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
     "/usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf",
+    "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
 ];
 
 impl FontEngine {
@@ -92,7 +94,23 @@ impl FontEngine {
     }
 
     /// Try to load a font from well-known system font paths.
+    ///
+    /// Also checks for a bundled font relative to the executable (AppImage).
     pub fn load_system_font() -> Result<Self, String> {
+        // Try exe-relative path first (for AppImage / bundled deployments).
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                let bundled = exe_dir.join("../share/fonts/LiberationSans-Regular.ttf");
+                if let Ok(canonical) = bundled.canonicalize() {
+                    if let Some(s) = canonical.to_str() {
+                        if let Ok(engine) = Self::load(s) {
+                            return Ok(engine);
+                        }
+                    }
+                }
+            }
+        }
+
         for path in FONT_SEARCH_PATHS {
             if std::fs::metadata(path).is_ok() {
                 match Self::load(path) {

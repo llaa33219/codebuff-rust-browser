@@ -83,6 +83,7 @@ impl ChromeState {
 pub enum ChromeHit {
     None,
     Tab(TabId),
+    CloseTabButton(TabId),
     NewTabButton,
     BackButton,
     ForwardButton,
@@ -105,6 +106,10 @@ pub fn chrome_hit_test(x: i32, y: i32, state: &ChromeState, shell: &BrowserShell
         for (i, tab) in tabs.iter().enumerate() {
             let tx = (i as u32) * tab_width;
             if x >= tx && x < tx + tab_width {
+                let close_x = tx + tab_width.saturating_sub(22);
+                if x >= close_x {
+                    return ChromeHit::CloseTabButton(tab.id);
+                }
                 return ChromeHit::Tab(tab.id);
             }
         }
@@ -187,9 +192,13 @@ fn render_tab_bar(
         // Tab background
         fb.fill_rect(tx as i32 + 1, 2, tab_width.saturating_sub(2), TAB_BAR_HEIGHT - 2, color);
 
-        // Tab title
+        // Tab title (leave room for close button)
         let title = if tab.title.is_empty() { "New Tab" } else { &tab.title };
-        draw_chrome_text(fb, tx as i32 + 8, 10, title, COLOR_TAB_TEXT, 12, tab_width.saturating_sub(16), &mut font_engine);
+        draw_chrome_text(fb, tx as i32 + 8, 10, title, COLOR_TAB_TEXT, 12, tab_width.saturating_sub(28), &mut font_engine);
+
+        // Close button "×"
+        let close_x = tx + tab_width.saturating_sub(20);
+        draw_chrome_text(fb, close_x as i32, 8, "x", 0xFF_888888, 12, 16, &mut font_engine);
     }
 
     // New tab "+" button
