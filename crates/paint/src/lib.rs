@@ -11,7 +11,7 @@ pub mod font_engine;
 
 use common::{Color, Rect};
 use layout::{LayoutTree, LayoutBoxId, LayoutBoxKind, LayoutBox};
-use style::{Display, Position, BorderStyle, Overflow};
+use style::{Display, Position, BorderStyle, Overflow, Visibility};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PositionedGlyph
@@ -117,6 +117,9 @@ fn paint_layout_box(tree: &LayoutTree, box_id: LayoutBoxId, list: &mut DisplayLi
     let style = &layout_box.computed_style;
     // Skip invisible boxes.
     if style.display == Display::None {
+        return;
+    }
+    if style.visibility != Visibility::Visible {
         return;
     }
 

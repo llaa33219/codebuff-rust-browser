@@ -899,10 +899,10 @@ fn lzw_decode(data: &[u8], min_code_size: u32, max_pixels: usize) -> Result<Vec<
             expand(&table, code, &mut output);
             if let Some(pc) = prev_code {
                 if next_code < max_table {
-                    let first_byte = output[mark]; // first byte of current expansion
+                    let first_byte = output[mark];
                     table.push((pc, first_byte));
                     next_code += 1;
-                    if next_code > (1 << code_size) && code_size < 12 {
+                    if next_code >= (1 << code_size) && code_size < 12 {
                         code_size += 1;
                     }
                 }
@@ -910,7 +910,6 @@ fn lzw_decode(data: &[u8], min_code_size: u32, max_pixels: usize) -> Result<Vec<
         } else if code == next_code {
             // Special case: code not yet in table.
             if let Some(pc) = prev_code {
-                // Expand prev_code to find its first character.
                 let mark = output.len();
                 expand(&table, pc, &mut output);
                 let first_byte = output[mark];
@@ -918,7 +917,7 @@ fn lzw_decode(data: &[u8], min_code_size: u32, max_pixels: usize) -> Result<Vec<
                 if next_code < max_table {
                     table.push((pc, first_byte));
                     next_code += 1;
-                    if next_code > (1 << code_size) && code_size < 12 {
+                    if next_code >= (1 << code_size) && code_size < 12 {
                         code_size += 1;
                     }
                 }

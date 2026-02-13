@@ -295,6 +295,230 @@ impl Default for GridStyle {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TextDecoration
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextDecoration {
+    None,
+    Underline,
+    Overline,
+    LineThrough,
+}
+
+impl Default for TextDecoration {
+    fn default() -> Self {
+        TextDecoration::None
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FontStyle
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FontStyle {
+    Normal,
+    Italic,
+    Oblique,
+}
+
+impl Default for FontStyle {
+    fn default() -> Self {
+        FontStyle::Normal
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Visibility
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    Visible,
+    Hidden,
+    Collapse,
+}
+
+impl Default for Visibility {
+    fn default() -> Self {
+        Visibility::Visible
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BoxSizing
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoxSizing {
+    ContentBox,
+    BorderBox,
+}
+
+impl Default for BoxSizing {
+    fn default() -> Self {
+        BoxSizing::ContentBox
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WhiteSpace
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WhiteSpace {
+    Normal,
+    NoWrap,
+    Pre,
+    PreWrap,
+    PreLine,
+}
+
+impl Default for WhiteSpace {
+    fn default() -> Self {
+        WhiteSpace::Normal
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TextTransform
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextTransform {
+    None,
+    Uppercase,
+    Lowercase,
+    Capitalize,
+}
+
+impl Default for TextTransform {
+    fn default() -> Self {
+        TextTransform::None
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VerticalAlign
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerticalAlign {
+    Baseline,
+    Top,
+    Middle,
+    Bottom,
+    TextTop,
+    TextBottom,
+    Sub,
+    Super,
+}
+
+impl Default for VerticalAlign {
+    fn default() -> Self {
+        VerticalAlign::Baseline
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TextOverflow
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextOverflow {
+    Clip,
+    Ellipsis,
+}
+
+impl Default for TextOverflow {
+    fn default() -> Self {
+        TextOverflow::Clip
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ListStyleType
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListStyleType {
+    None,
+    Disc,
+    Circle,
+    Square,
+    Decimal,
+}
+
+impl Default for ListStyleType {
+    fn default() -> Self {
+        ListStyleType::Disc
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AlignSelf
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlignSelf {
+    Auto,
+    FlexStart,
+    FlexEnd,
+    Center,
+    Baseline,
+    Stretch,
+}
+
+impl Default for AlignSelf {
+    fn default() -> Self {
+        AlignSelf::Auto
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AlignContent
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlignContent {
+    FlexStart,
+    FlexEnd,
+    Center,
+    SpaceBetween,
+    SpaceAround,
+    Stretch,
+}
+
+impl Default for AlignContent {
+    fn default() -> Self {
+        AlignContent::Stretch
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cursor
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cursor {
+    Auto,
+    Default,
+    Pointer,
+    Text,
+    Move,
+    NotAllowed,
+    Crosshair,
+    Wait,
+}
+
+impl Default for Cursor {
+    fn default() -> Self {
+        Cursor::Auto
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // BorderSide
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -327,6 +551,7 @@ pub struct ComputedStyle {
     pub display: Display,
     pub position: Position,
     pub float: Float,
+    pub box_sizing: BoxSizing,
 
     // -- Color --
     pub color: Color,
@@ -336,13 +561,23 @@ pub struct ComputedStyle {
     pub font_size_px: f32,
     pub font_weight: u16,
     pub font_family: String,
+    pub font_style: FontStyle,
     pub line_height_px: f32,
     pub text_align: TextAlign,
+    pub text_decoration: TextDecoration,
+    pub text_transform: TextTransform,
+    pub text_indent: f32,
+    pub text_overflow: TextOverflow,
+    pub letter_spacing: f32,
+    pub word_spacing: f32,
+    pub white_space: WhiteSpace,
+    pub vertical_align: VerticalAlign,
 
     // -- Box dimensions --
     pub margin: Edges<f32>,
     pub padding: Edges<f32>,
     pub border: Edges<BorderSide>,
+    pub border_radius: [f32; 4],
 
     // -- Sizing --
     pub width: Option<f32>,
@@ -352,8 +587,17 @@ pub struct ComputedStyle {
     pub max_width: Option<f32>,
     pub max_height: Option<f32>,
 
+    // -- Position offsets --
+    pub top: Option<f32>,
+    pub right: Option<f32>,
+    pub bottom: Option<f32>,
+    pub left: Option<f32>,
+
     // -- Flexbox --
     pub flex: FlexStyle,
+    pub align_self: AlignSelf,
+    pub align_content: AlignContent,
+    pub gap: f32,
 
     // -- Grid --
     pub grid: GridStyle,
@@ -367,6 +611,11 @@ pub struct ComputedStyle {
 
     // -- Visual --
     pub opacity: f32,
+    pub visibility: Visibility,
+    pub cursor: Cursor,
+
+    // -- List --
+    pub list_style_type: ListStyleType,
 }
 
 impl Default for ComputedStyle {
@@ -375,6 +624,7 @@ impl Default for ComputedStyle {
             display: Display::Inline,
             position: Position::Static,
             float: Float::None,
+            box_sizing: BoxSizing::ContentBox,
 
             color: Color::BLACK,
             background_color: Color::TRANSPARENT,
@@ -382,8 +632,17 @@ impl Default for ComputedStyle {
             font_size_px: 16.0,
             font_weight: 400,
             font_family: String::from("serif"),
+            font_style: FontStyle::Normal,
             line_height_px: 19.2, // 1.2 * 16
             text_align: TextAlign::Left,
+            text_decoration: TextDecoration::None,
+            text_transform: TextTransform::None,
+            text_indent: 0.0,
+            text_overflow: TextOverflow::Clip,
+            letter_spacing: 0.0,
+            word_spacing: 0.0,
+            white_space: WhiteSpace::Normal,
+            vertical_align: VerticalAlign::Baseline,
 
             margin: Edges::zero(),
             padding: Edges::zero(),
@@ -393,6 +652,7 @@ impl Default for ComputedStyle {
                 bottom: BorderSide::default(),
                 left: BorderSide::default(),
             },
+            border_radius: [0.0; 4],
 
             width: None,
             height: None,
@@ -401,7 +661,15 @@ impl Default for ComputedStyle {
             max_width: None,
             max_height: None,
 
+            top: None,
+            right: None,
+            bottom: None,
+            left: None,
+
             flex: FlexStyle::default(),
+            align_self: AlignSelf::Auto,
+            align_content: AlignContent::Stretch,
+            gap: 0.0,
 
             grid: GridStyle::default(),
 
@@ -411,6 +679,10 @@ impl Default for ComputedStyle {
             overflow_y: Overflow::Visible,
 
             opacity: 1.0,
+            visibility: Visibility::Visible,
+            cursor: Cursor::Auto,
+
+            list_style_type: ListStyleType::Disc,
         }
     }
 }

@@ -64,6 +64,7 @@ pub enum ImageFormat {
     WebP,
     Gif,
     Bmp,
+    Svg,
     Unknown,
 }
 
@@ -80,6 +81,15 @@ pub fn detect_format(data: &[u8]) -> ImageFormat {
     } else if data.len() >= 2 && data[0] == b'B' && data[1] == b'M' {
         ImageFormat::Bmp
     } else {
+        // SVG detection (XML/text-based)
+        let prefix = std::str::from_utf8(&data[..data.len().min(256)]).unwrap_or("");
+        let trimmed = prefix.trim_start();
+        if trimmed.starts_with("<svg")
+            || trimmed.starts_with("<?xml")
+            || trimmed.starts_with("<!DOCTYPE svg")
+        {
+            return ImageFormat::Svg;
+        }
         ImageFormat::Unknown
     }
 }
@@ -92,8 +102,95 @@ pub fn decode(data: &[u8]) -> Result<Image, common::ParseError> {
         ImageFormat::WebP => webp::decode_webp(data),
         ImageFormat::Gif => webp::decode_gif(data),
         ImageFormat::Bmp => webp::decode_bmp(data),
+        ImageFormat::Svg => decode_svg(data),
         ImageFormat::Unknown => Err(common::ParseError::InvalidValue("unknown image format")),
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SVG decoder (placeholder rendering with correct dimensions)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn decode_svg(data: &[u8]) -> Result<Image, common::ParseError> {
+    let text = std::str::from_utf8(data)
+        .map_err(|_| common::ParseError::InvalidValue("SVG: invalid UTF-8"))?;
+
+    let (width, height) = parse_svg_dimensions(text).unwrap_or((200, 150));
+    let w = width.clamp(1, 2048);
+    let h = height.clamp(1, 2048);
+
+    let mut img = Image::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            img.set_pixel(x, y, [240, 240, 245, 255]);
+        }
+    }
+    // Draw a subtle border
+    for x in 0..w {
+        img.set_pixel(x, 0, [200, 200, 210, 255]);
+        if h > 1 {
+            img.set_pixel(x, h - 1, [200, 200, 210, 255]);
+        }
+    }
+    for y in 0..h {
+        img.set_pixel(0, y, [200, 200, 210, 255]);
+        if w > 1 {
+            img.set_pixel(w - 1, y, [200, 200, 210, 255]);
+        }
+    }
+    Ok(img)
+}
+
+fn parse_svg_dimensions(text: &str) -> Option<(u32, u32)> {
+    let svg_start = text.find("<svg")?;
+    let svg_tag_end = text[svg_start..].find('>')? + svg_start;
+    let svg_tag = &text[svg_start..=svg_tag_end];
+
+    let width = extract_svg_attr(svg_tag, "width").and_then(|s| parse_svg_length(&s));
+    let height = extract_svg_attr(svg_tag, "height").and_then(|s| parse_svg_length(&s));
+
+    if let (Some(w), Some(h)) = (width, height) {
+        return Some((w, h));
+    }
+
+    // Fall back to viewBox
+    if let Some(vb) = extract_svg_attr(svg_tag, "viewBox") {
+        let parts: Vec<f64> = vb
+            .split(|c: char| c == ' ' || c == ',')
+            .filter_map(|s| s.trim().parse::<f64>().ok())
+            .collect();
+        if parts.len() >= 4 {
+            return Some((parts[2].max(1.0) as u32, parts[3].max(1.0) as u32));
+        }
+    }
+
+    None
+}
+
+fn extract_svg_attr(tag: &str, attr_name: &str) -> Option<String> {
+    let search = format!("{}=", attr_name);
+    let pos = tag.find(&search)?;
+    let after = tag[pos + search.len()..].trim_start();
+    if after.starts_with('"') {
+        let end = after[1..].find('"')?;
+        Some(after[1..1 + end].to_string())
+    } else if after.starts_with('\'') {
+        let end = after[1..].find('\'')?;
+        Some(after[1..1 + end].to_string())
+    } else {
+        let end = after
+            .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
+            .unwrap_or(after.len());
+        Some(after[..end].to_string())
+    }
+}
+
+fn parse_svg_length(s: &str) -> Option<u32> {
+    let s = s.trim();
+    let num_end = s
+        .find(|c: char| !c.is_ascii_digit() && c != '.')
+        .unwrap_or(s.len());
+    s[..num_end].parse::<f64>().ok().map(|v| v.max(1.0) as u32)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -161,6 +258,18 @@ mod tests {
     }
 
     #[test]
+    fn detect_svg() {
+        let svg = b"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\"></svg>";
+        assert_eq!(detect_format(svg), ImageFormat::Svg);
+    }
+
+    #[test]
+    fn detect_svg_with_xml_prolog() {
+        let svg = b"<?xml version=\"1.0\"?><svg></svg>";
+        assert_eq!(detect_format(svg), ImageFormat::Svg);
+    }
+
+    #[test]
     fn detect_unknown() {
         let garbage = [0x00, 0x01, 0x02, 0x03];
         assert_eq!(detect_format(&garbage), ImageFormat::Unknown);
@@ -169,5 +278,21 @@ mod tests {
     #[test]
     fn detect_empty() {
         assert_eq!(detect_format(&[]), ImageFormat::Unknown);
+    }
+
+    #[test]
+    fn decode_svg_with_dimensions() {
+        let svg = b"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"80\" height=\"60\"></svg>";
+        let img = decode(svg).unwrap();
+        assert_eq!(img.width, 80);
+        assert_eq!(img.height, 60);
+    }
+
+    #[test]
+    fn decode_svg_with_viewbox() {
+        let svg = b"<svg viewBox=\"0 0 300 200\"></svg>";
+        let img = decode(svg).unwrap();
+        assert_eq!(img.width, 300);
+        assert_eq!(img.height, 200);
     }
 }

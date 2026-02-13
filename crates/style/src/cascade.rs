@@ -177,8 +177,17 @@ fn inherit_from_parent(parent: &ComputedStyle) -> ComputedStyle {
     s.font_size_px = parent.font_size_px;
     s.font_weight = parent.font_weight;
     s.font_family = parent.font_family.clone();
+    s.font_style = parent.font_style;
     s.line_height_px = parent.line_height_px;
     s.text_align = parent.text_align;
+    s.text_transform = parent.text_transform;
+    s.text_indent = parent.text_indent;
+    s.letter_spacing = parent.letter_spacing;
+    s.word_spacing = parent.word_spacing;
+    s.white_space = parent.white_space;
+    s.visibility = parent.visibility;
+    s.cursor = parent.cursor;
+    s.list_style_type = parent.list_style_type;
 
     s
 }
@@ -537,6 +546,374 @@ pub fn apply_declaration(
             }
         }
 
+        "visibility" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.visibility = match kw {
+                    "visible" => Visibility::Visible,
+                    "hidden" => Visibility::Hidden,
+                    "collapse" => Visibility::Collapse,
+                    _ => style.visibility,
+                };
+            }
+        }
+
+        "box-sizing" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.box_sizing = match kw {
+                    "content-box" => BoxSizing::ContentBox,
+                    "border-box" => BoxSizing::BorderBox,
+                    _ => style.box_sizing,
+                };
+            }
+        }
+
+        "text-decoration" | "text-decoration-line" => {
+            if let Some(kw) = first_keyword_or_none(&decl.value) {
+                style.text_decoration = match kw {
+                    "none" => TextDecoration::None,
+                    "underline" => TextDecoration::Underline,
+                    "overline" => TextDecoration::Overline,
+                    "line-through" => TextDecoration::LineThrough,
+                    _ => style.text_decoration,
+                };
+            }
+        }
+
+        "font-style" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.font_style = match kw {
+                    "normal" => FontStyle::Normal,
+                    "italic" => FontStyle::Italic,
+                    "oblique" => FontStyle::Oblique,
+                    _ => style.font_style,
+                };
+            }
+        }
+
+        "white-space" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.white_space = match kw {
+                    "normal" => WhiteSpace::Normal,
+                    "nowrap" => WhiteSpace::NoWrap,
+                    "pre" => WhiteSpace::Pre,
+                    "pre-wrap" => WhiteSpace::PreWrap,
+                    "pre-line" => WhiteSpace::PreLine,
+                    _ => style.white_space,
+                };
+            }
+        }
+
+        "text-transform" => {
+            if let Some(kw) = first_keyword_or_none(&decl.value) {
+                style.text_transform = match kw {
+                    "none" => TextTransform::None,
+                    "uppercase" => TextTransform::Uppercase,
+                    "lowercase" => TextTransform::Lowercase,
+                    "capitalize" => TextTransform::Capitalize,
+                    _ => style.text_transform,
+                };
+            }
+        }
+
+        "letter-spacing" => {
+            if let Some(px) = first_length_px(&decl.value, style.font_size_px) {
+                style.letter_spacing = px;
+            } else if matches!(decl.value.first(), Some(CssValue::Keyword(k)) if k == "normal") {
+                style.letter_spacing = 0.0;
+            }
+        }
+
+        "word-spacing" => {
+            if let Some(px) = first_length_px(&decl.value, style.font_size_px) {
+                style.word_spacing = px;
+            } else if matches!(decl.value.first(), Some(CssValue::Keyword(k)) if k == "normal") {
+                style.word_spacing = 0.0;
+            }
+        }
+
+        "vertical-align" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.vertical_align = match kw {
+                    "baseline" => VerticalAlign::Baseline,
+                    "top" => VerticalAlign::Top,
+                    "middle" => VerticalAlign::Middle,
+                    "bottom" => VerticalAlign::Bottom,
+                    "text-top" => VerticalAlign::TextTop,
+                    "text-bottom" => VerticalAlign::TextBottom,
+                    "sub" => VerticalAlign::Sub,
+                    "super" => VerticalAlign::Super,
+                    _ => style.vertical_align,
+                };
+            }
+        }
+
+        "text-indent" => {
+            if let Some(px) = first_length_px(&decl.value, style.font_size_px) {
+                style.text_indent = px;
+            }
+        }
+
+        "text-overflow" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.text_overflow = match kw {
+                    "clip" => TextOverflow::Clip,
+                    "ellipsis" => TextOverflow::Ellipsis,
+                    _ => style.text_overflow,
+                };
+            }
+        }
+
+        "list-style-type" | "list-style" => {
+            if let Some(kw) = first_keyword_or_none(&decl.value) {
+                style.list_style_type = match kw {
+                    "none" => ListStyleType::None,
+                    "disc" => ListStyleType::Disc,
+                    "circle" => ListStyleType::Circle,
+                    "square" => ListStyleType::Square,
+                    "decimal" => ListStyleType::Decimal,
+                    _ => style.list_style_type,
+                };
+            }
+        }
+
+        "border-radius" => {
+            let vals = collect_lengths(&decl.value, style.font_size_px);
+            match vals.len() {
+                1 => style.border_radius = [vals[0]; 4],
+                2 => style.border_radius = [vals[0], vals[1], vals[0], vals[1]],
+                3 => style.border_radius = [vals[0], vals[1], vals[2], vals[1]],
+                4 => style.border_radius = [vals[0], vals[1], vals[2], vals[3]],
+                _ => {}
+            }
+        }
+        "border-top-left-radius" => {
+            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+                style.border_radius[0] = v;
+            }
+        }
+        "border-top-right-radius" => {
+            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+                style.border_radius[1] = v;
+            }
+        }
+        "border-bottom-right-radius" => {
+            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+                style.border_radius[2] = v;
+            }
+        }
+        "border-bottom-left-radius" => {
+            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+                style.border_radius[3] = v;
+            }
+        }
+
+        "top" => style.top = first_length_or_none(&decl.value, style.font_size_px),
+        "right" => style.right = first_length_or_none(&decl.value, style.font_size_px),
+        "bottom" => style.bottom = first_length_or_none(&decl.value, style.font_size_px),
+        "left" => style.left = first_length_or_none(&decl.value, style.font_size_px),
+
+        "border-top-width" => {
+            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+                style.border.top.width = v;
+            }
+        }
+        "border-right-width" => {
+            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+                style.border.right.width = v;
+            }
+        }
+        "border-bottom-width" => {
+            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+                style.border.bottom.width = v;
+            }
+        }
+        "border-left-width" => {
+            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+                style.border.left.width = v;
+            }
+        }
+
+        "border-top-style" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.border.top.style = parse_border_style(kw);
+            }
+        }
+        "border-right-style" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.border.right.style = parse_border_style(kw);
+            }
+        }
+        "border-bottom-style" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.border.bottom.style = parse_border_style(kw);
+            }
+        }
+        "border-left-style" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.border.left.style = parse_border_style(kw);
+            }
+        }
+
+        "border-top-color" => {
+            if let Some(c) = first_color(&decl.value) {
+                style.border.top.color = c;
+            }
+        }
+        "border-right-color" => {
+            if let Some(c) = first_color(&decl.value) {
+                style.border.right.color = c;
+            }
+        }
+        "border-bottom-color" => {
+            if let Some(c) = first_color(&decl.value) {
+                style.border.bottom.color = c;
+            }
+        }
+        "border-left-color" => {
+            if let Some(c) = first_color(&decl.value) {
+                style.border.left.color = c;
+            }
+        }
+
+        "border-top" => apply_border_side_shorthand(&decl.value, &mut style.border.top, style.font_size_px),
+        "border-right" => apply_border_side_shorthand(&decl.value, &mut style.border.right, style.font_size_px),
+        "border-bottom" => apply_border_side_shorthand(&decl.value, &mut style.border.bottom, style.font_size_px),
+        "border-left" => apply_border_side_shorthand(&decl.value, &mut style.border.left, style.font_size_px),
+
+        "align-self" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.align_self = match kw {
+                    "auto" => AlignSelf::Auto,
+                    "flex-start" => AlignSelf::FlexStart,
+                    "flex-end" => AlignSelf::FlexEnd,
+                    "center" => AlignSelf::Center,
+                    "baseline" => AlignSelf::Baseline,
+                    "stretch" => AlignSelf::Stretch,
+                    _ => style.align_self,
+                };
+            }
+        }
+
+        "align-content" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.align_content = match kw {
+                    "flex-start" => AlignContent::FlexStart,
+                    "flex-end" => AlignContent::FlexEnd,
+                    "center" => AlignContent::Center,
+                    "space-between" => AlignContent::SpaceBetween,
+                    "space-around" => AlignContent::SpaceAround,
+                    "stretch" => AlignContent::Stretch,
+                    _ => style.align_content,
+                };
+            }
+        }
+
+        "gap" | "grid-gap" => {
+            if let Some(px) = first_length_px(&decl.value, style.font_size_px) {
+                style.gap = px;
+                style.grid.column_gap = px;
+                style.grid.row_gap = px;
+            }
+        }
+        "row-gap" | "grid-row-gap" => {
+            if let Some(px) = first_length_px(&decl.value, style.font_size_px) {
+                style.grid.row_gap = px;
+            }
+        }
+        "column-gap" | "grid-column-gap" => {
+            if let Some(px) = first_length_px(&decl.value, style.font_size_px) {
+                style.grid.column_gap = px;
+            }
+        }
+
+        "flex" => {
+            // flex shorthand: <grow> [<shrink>] [<basis>]
+            let mut nums = Vec::new();
+            for v in &decl.value {
+                match v {
+                    CssValue::Number(n) => nums.push(*n as f32),
+                    CssValue::Length(val, unit) => {
+                        style.flex.basis = Some(resolve_length(*val, unit, style.font_size_px));
+                    }
+                    CssValue::Keyword(k) if k == "auto" => { style.flex.basis = None; }
+                    CssValue::None => {
+                        style.flex.grow = 0.0;
+                        style.flex.shrink = 0.0;
+                        style.flex.basis = None;
+                    }
+                    _ => {}
+                }
+            }
+            if nums.len() >= 1 {
+                style.flex.grow = nums[0];
+            }
+            if nums.len() >= 2 {
+                style.flex.shrink = nums[1];
+            }
+        }
+
+        "flex-flow" => {
+            for v in &decl.value {
+                if let CssValue::Keyword(kw) = v {
+                    match kw.as_str() {
+                        "row" => style.flex.direction = FlexDirection::Row,
+                        "row-reverse" => style.flex.direction = FlexDirection::RowReverse,
+                        "column" => style.flex.direction = FlexDirection::Column,
+                        "column-reverse" => style.flex.direction = FlexDirection::ColumnReverse,
+                        "nowrap" => style.flex.wrap = FlexWrap::NoWrap,
+                        "wrap" => style.flex.wrap = FlexWrap::Wrap,
+                        "wrap-reverse" => style.flex.wrap = FlexWrap::WrapReverse,
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        "font" => {
+            // Simplified font shorthand: just look for size and weight
+            for v in &decl.value {
+                match v {
+                    CssValue::Length(val, unit) => {
+                        let px = resolve_length(*val, unit, style.font_size_px);
+                        style.font_size_px = px;
+                        style.line_height_px = px * 1.2;
+                    }
+                    CssValue::Number(n) => {
+                        let n = *n as u16;
+                        if n >= 100 && n <= 900 {
+                            style.font_weight = n;
+                        }
+                    }
+                    CssValue::Keyword(kw) => match kw.as_str() {
+                        "bold" => style.font_weight = 700,
+                        "normal" => style.font_weight = 400,
+                        "italic" => style.font_style = FontStyle::Italic,
+                        _ => {}
+                    },
+                    CssValue::String(s) => {
+                        style.font_family = s.clone();
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        "cursor" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.cursor = match kw {
+                    "auto" => Cursor::Auto,
+                    "default" => Cursor::Default,
+                    "pointer" => Cursor::Pointer,
+                    "text" => Cursor::Text,
+                    "move" => Cursor::Move,
+                    "not-allowed" => Cursor::NotAllowed,
+                    "crosshair" => Cursor::Crosshair,
+                    "wait" => Cursor::Wait,
+                    _ => style.cursor,
+                };
+            }
+        }
+
         _ => {
             // Unknown property — ignore.
         }
@@ -553,8 +930,17 @@ fn apply_inherit(style: &mut ComputedStyle, prop: &str, parent: &ComputedStyle) 
         "font-size" => style.font_size_px = parent.font_size_px,
         "font-weight" => style.font_weight = parent.font_weight,
         "font-family" => style.font_family = parent.font_family.clone(),
+        "font-style" => style.font_style = parent.font_style,
         "line-height" => style.line_height_px = parent.line_height_px,
         "text-align" => style.text_align = parent.text_align,
+        "text-transform" => style.text_transform = parent.text_transform,
+        "text-indent" => style.text_indent = parent.text_indent,
+        "letter-spacing" => style.letter_spacing = parent.letter_spacing,
+        "word-spacing" => style.word_spacing = parent.word_spacing,
+        "white-space" => style.white_space = parent.white_space,
+        "visibility" => style.visibility = parent.visibility,
+        "cursor" => style.cursor = parent.cursor,
+        "list-style-type" | "list-style" => style.list_style_type = parent.list_style_type,
         "display" => style.display = parent.display,
         "opacity" => style.opacity = parent.opacity,
         _ => {}
@@ -575,12 +961,26 @@ fn apply_initial(style: &mut ComputedStyle, prop: &str) {
         }
         "font-weight" => style.font_weight = def.font_weight,
         "font-family" => style.font_family = def.font_family,
+        "font-style" => style.font_style = def.font_style,
         "line-height" => style.line_height_px = def.line_height_px,
         "text-align" => style.text_align = def.text_align,
+        "text-decoration" | "text-decoration-line" => style.text_decoration = def.text_decoration,
+        "text-transform" => style.text_transform = def.text_transform,
+        "text-indent" => style.text_indent = def.text_indent,
+        "text-overflow" => style.text_overflow = def.text_overflow,
+        "letter-spacing" => style.letter_spacing = def.letter_spacing,
+        "word-spacing" => style.word_spacing = def.word_spacing,
+        "white-space" => style.white_space = def.white_space,
+        "vertical-align" => style.vertical_align = def.vertical_align,
+        "visibility" => style.visibility = def.visibility,
+        "box-sizing" => style.box_sizing = def.box_sizing,
         "margin" => style.margin = def.margin,
         "padding" => style.padding = def.padding,
+        "border-radius" => style.border_radius = def.border_radius,
         "opacity" => style.opacity = def.opacity,
         "z-index" => style.z_index = def.z_index,
+        "cursor" => style.cursor = def.cursor,
+        "list-style-type" | "list-style" => style.list_style_type = def.list_style_type,
         _ => {}
     }
 }
@@ -776,6 +1176,33 @@ fn apply_edge_shorthand(values: &[CssValue], edges: &mut Edges<f32>, parent_font
         edges.right = r;
         edges.bottom = b;
         edges.left = l;
+    }
+}
+
+fn apply_border_side_shorthand(values: &[CssValue], side: &mut BorderSide, parent_font_size: f32) {
+    for v in values {
+        match v {
+            CssValue::Length(val, unit) => {
+                side.width = resolve_length(*val, unit, parent_font_size);
+            }
+            CssValue::Number(n) if *n == 0.0 => {
+                side.width = 0.0;
+            }
+            CssValue::Keyword(kw) => {
+                let bs = parse_border_style(kw);
+                if bs != BorderStyle::None || kw == "none" {
+                    side.style = bs;
+                }
+            }
+            CssValue::Color(c) => {
+                side.color = css_color_to_color(c);
+            }
+            CssValue::None => {
+                side.style = BorderStyle::None;
+                side.width = 0.0;
+            }
+            _ => {}
+        }
     }
 }
 
