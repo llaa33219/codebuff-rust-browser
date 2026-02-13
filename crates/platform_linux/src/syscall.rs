@@ -164,12 +164,24 @@ pub fn read_exact(fd: i32, buf: &mut [u8]) -> Result<(), i32> {
 }
 
 /// Write all bytes to a file descriptor.
+///
+/// Handles `EAGAIN` (errno 11) transparently so this works on both blocking
+/// and non-blocking file descriptors.
 pub fn write_all(fd: i32, buf: &[u8]) -> Result<(), i32> {
     let mut offset = 0;
     while offset < buf.len() {
         let n = unsafe { write(fd, buf[offset..].as_ptr(), buf.len() - offset) };
         if n < 0 {
-            return Err(errno());
+            let e = errno();
+            if e == 11 {
+                // EAGAIN — socket buffer full, yield and retry.
+                std::thread::yield_now();
+                continue;
+            }
+            return Err(e);
+        }
+        if n == 0 {
+            return Err(0);
         }
         offset += n as usize;
     }

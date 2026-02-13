@@ -602,6 +602,9 @@ impl BrowserEngine {
     // ─────────────────────────────────────────────────────────────────────
 
     fn render_frame(&mut self) {
+        if self.width == 0 || self.height == 0 {
+            return;
+        }
         // Clear framebuffer
         self.framebuffer.clear(0xFFFF_FFFF);
 
@@ -729,6 +732,9 @@ impl BrowserEngine {
     }
 
     fn handle_resize(&mut self, w: u32, h: u32) {
+        if w < 1 || h < 1 {
+            return;
+        }
         if w == self.width && h == self.height {
             return;
         }
