@@ -14,7 +14,7 @@ pub mod build;
 
 pub use geometry::{BoxModel, compute_box_model};
 pub use tree::{LayoutBoxId, LayoutBoxKind, LayoutBox, LayoutTree};
-pub use block::{layout_block, collapse_margins};
+pub use block::{layout_block, collapse_margins, resolve_absolute_positions};
 pub use inline::{LineBox, LineItem, layout_inline_content};
 pub use flex::layout_flex;
 pub use grid::layout_grid;

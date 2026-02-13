@@ -575,6 +575,11 @@ impl BrowserEngine {
             (0.0, 0.0)
         };
 
+        // Step 5b: Convert parent-relative coordinates to absolute.
+        if let Some(root_id) = layout_tree.root {
+            layout::resolve_absolute_positions(&mut layout_tree, root_id, 0.0, 0.0);
+        }
+
         // Step 6: Generate display list
         let display_list = paint::build_display_list(&layout_tree);
 
@@ -764,6 +769,9 @@ impl BrowserEngine {
                 } else {
                     (0.0, 0.0)
                 };
+                if let Some(root_id) = layout_tree.root {
+                    layout::resolve_absolute_positions(&mut layout_tree, root_id, 0.0, 0.0);
+                }
                 let display_list = paint::build_display_list(&layout_tree);
                 (layout_tree, display_list, content_height)
             };
@@ -935,6 +943,9 @@ impl BrowserEngine {
             } else {
                 (0.0, 0.0)
             };
+            if let Some(root_id) = layout_tree.root {
+                layout::resolve_absolute_positions(&mut layout_tree, root_id, 0.0, 0.0);
+            }
             page.display_list = paint::build_display_list(&layout_tree);
             page.layout_tree = layout_tree;
             page.content_height = content_height;

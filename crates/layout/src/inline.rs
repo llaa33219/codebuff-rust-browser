@@ -79,6 +79,16 @@ pub fn layout_inline_content(
             b.box_model.margin_box = b.box_model.content_box;
         }
 
+        // For inline elements (e.g. <a>, <span>), position their children
+        // within the element's content area so the absolute-positioning pass
+        // can propagate correctly.
+        let is_inline = tree.get(child_id)
+            .map(|b| b.kind == LayoutBoxKind::Inline)
+            .unwrap_or(false);
+        if is_inline {
+            position_inline_children(tree, child_id);
+        }
+
         current_line.height = current_line.height.max(child_height);
         current_line.items.push(item);
         cursor_x += child_width;
@@ -111,7 +121,7 @@ fn measure_inline_box(tree: &LayoutTree, box_id: LayoutBoxId, _available_width: 
             let text = b.text.as_deref().unwrap_or("");
             // Simple width estimate: ~0.6 * font_size per character.
             let avg_char_width = font_size * 0.6;
-            let width = text.len() as f32 * avg_char_width;
+            let width = text.chars().count() as f32 * avg_char_width;
             (width, line_height)
         }
         LayoutBoxKind::Inline => {
@@ -135,6 +145,37 @@ fn measure_inline_box(tree: &LayoutTree, box_id: LayoutBoxId, _available_width: 
             (w, h)
         }
         _ => (0.0, line_height),
+    }
+}
+
+/// Position children of an inline element (e.g. text runs inside `<a>` or
+/// `<span>`) sequentially along the x-axis.  This ensures they have non-zero
+/// dimensions when the absolute-positioning pass runs.
+fn position_inline_children(tree: &mut LayoutTree, parent_id: LayoutBoxId) {
+    let (parent_w, parent_h, children) = match tree.get(parent_id) {
+        Some(b) => (
+            b.box_model.content_box.w,
+            b.box_model.content_box.h,
+            b.children.clone(),
+        ),
+        None => return,
+    };
+
+    let mut cursor_x = 0.0f32;
+    for child_id in children {
+        let (child_w, child_h) = measure_inline_box(tree, child_id, parent_w);
+        let h = if child_h > 0.0 { child_h } else { parent_h };
+        if let Some(b) = tree.get_mut(child_id) {
+            b.box_model.content_box = Rect::new(cursor_x, 0.0, child_w, h);
+            b.box_model.border_box = b.box_model.content_box;
+            b.box_model.padding_box = b.box_model.content_box;
+            b.box_model.margin_box = b.box_model.content_box;
+        }
+        cursor_x += child_w;
+
+        if tree.get(child_id).map(|b| b.kind == LayoutBoxKind::Inline).unwrap_or(false) {
+            position_inline_children(tree, child_id);
+        }
     }
 }
 

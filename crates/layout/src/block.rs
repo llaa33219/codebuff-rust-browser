@@ -252,6 +252,52 @@ fn resolve_auto_margins(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Absolute positioning
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Convert all layout box coordinates from parent-relative to absolute.
+///
+/// After `layout_block` finishes, every box's coordinates are relative to its
+/// containing block's content area.  This recursive pass walks the tree and
+/// offsets each box by its parent's absolute content-area origin so that all
+/// coordinates become screen-absolute.
+///
+/// Call with `(root_id, 0.0, 0.0)` after the initial `layout_block` pass.
+pub fn resolve_absolute_positions(
+    tree: &mut LayoutTree,
+    box_id: LayoutBoxId,
+    parent_x: f32,
+    parent_y: f32,
+) {
+    let children = match tree.get(box_id) {
+        Some(b) => b.children.clone(),
+        None => return,
+    };
+
+    // Offset this box by the parent's absolute content-area origin.
+    if let Some(b) = tree.get_mut(box_id) {
+        b.box_model.content_box.x += parent_x;
+        b.box_model.content_box.y += parent_y;
+        b.box_model.padding_box.x += parent_x;
+        b.box_model.padding_box.y += parent_y;
+        b.box_model.border_box.x += parent_x;
+        b.box_model.border_box.y += parent_y;
+        b.box_model.margin_box.x += parent_x;
+        b.box_model.margin_box.y += parent_y;
+    }
+
+    // The now-absolute content position becomes the origin for children.
+    let (abs_cx, abs_cy) = tree
+        .get(box_id)
+        .map(|b| (b.box_model.content_box.x, b.box_model.content_box.y))
+        .unwrap_or((0.0, 0.0));
+
+    for child_id in children {
+        resolve_absolute_positions(tree, child_id, abs_cx, abs_cy);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
