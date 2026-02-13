@@ -66,6 +66,9 @@ pub struct TreeBuilder {
     template_modes: Vec<InsertionMode>,
     document: NodeId,
     pending_text: String,
+    /// When set, the parse loop should switch the tokenizer to raw-text mode
+    /// for this tag name.  The field is consumed (taken) after each token.
+    pub pending_rawtext_tag: Option<String>,
 }
 
 impl TreeBuilder {
@@ -85,6 +88,7 @@ impl TreeBuilder {
             template_modes: Vec::new(),
             document,
             pending_text: String::new(),
+            pending_rawtext_tag: None,
         }
     }
 
@@ -487,6 +491,7 @@ impl TreeBuilder {
                 self.insert_element(name, attrs);
                 self.original_mode = self.mode;
                 self.mode = InsertionMode::Text;
+                self.pending_rawtext_tag = Some(name.clone());
             }
             HtmlToken::StartTag { ref name, ref attrs, .. }
                 if name == "noscript" || name == "noframes" || name == "style" =>
@@ -494,11 +499,13 @@ impl TreeBuilder {
                 self.insert_element(name, attrs);
                 self.original_mode = self.mode;
                 self.mode = InsertionMode::Text;
+                self.pending_rawtext_tag = Some(name.clone());
             }
             HtmlToken::StartTag { ref name, ref attrs, .. } if name == "script" => {
                 self.insert_element(name, attrs);
                 self.original_mode = self.mode;
                 self.mode = InsertionMode::Text;
+                self.pending_rawtext_tag = Some(name.clone());
             }
             HtmlToken::EndTag { ref name } if name == "head" => {
                 self.open_elements.pop();
@@ -955,6 +962,18 @@ impl TreeBuilder {
                 }
             }
 
+            // <script>, <style>, <textarea> in body — raw text elements
+            HtmlToken::StartTag {
+                ref name,
+                ref attrs,
+                ..
+            } if name == "script" || name == "style" || name == "textarea" => {
+                self.insert_element(name, attrs);
+                self.original_mode = self.mode;
+                self.mode = InsertionMode::Text;
+                self.pending_rawtext_tag = Some(name.clone());
+            }
+
             // EOF
             HtmlToken::EOF => {
                 // Stop
@@ -1259,6 +1278,10 @@ pub fn parse(input: &str) -> Dom {
         let token = tokenizer.next_token();
         let is_eof = token == HtmlToken::EOF;
         builder.process_token(token);
+        // If the tree builder wants raw-text mode, switch the tokenizer.
+        if let Some(tag) = builder.pending_rawtext_tag.take() {
+            tokenizer.switch_to_rawtext(&tag);
+        }
         if is_eof {
             break;
         }

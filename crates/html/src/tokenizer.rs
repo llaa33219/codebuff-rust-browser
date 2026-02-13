@@ -54,6 +54,7 @@ enum State {
     DecimalCharacterReference,
     NumericCharacterReferenceEnd,
     NamedCharacterReference,
+    RawText,
 }
 
 // ---------------------------------------------------------------------------
@@ -87,6 +88,9 @@ pub struct Tokenizer {
     temp_buf: String,
     char_ref_code: u32,
 
+    // Raw-text end tag (for <script>, <style>, etc.)
+    rawtext_end_tag: String,
+
     // Queue of tokens to emit (we sometimes need to emit multiple)
     pending: Vec<HtmlToken>,
     done: bool,
@@ -116,6 +120,8 @@ impl Tokenizer {
 
             temp_buf: String::new(),
             char_ref_code: 0,
+
+            rawtext_end_tag: String::new(),
 
             pending: Vec::new(),
             done: false,
@@ -219,6 +225,15 @@ impl Tokenizer {
     // -----------------------------------------------------------------------
     // Character reference helpers
     // -----------------------------------------------------------------------
+
+    /// Switch the tokenizer into raw-text mode.  All characters will be
+    /// emitted as `Character` tokens until `</tag_name>` (case-insensitive)
+    /// is encountered, at which point the end tag is emitted and the
+    /// tokenizer returns to `Data` state.
+    pub fn switch_to_rawtext(&mut self, tag_name: &str) {
+        self.rawtext_end_tag = tag_name.to_ascii_lowercase();
+        self.state = State::RawText;
+    }
 
     fn flush_code_points_consumed_as_char_ref(&mut self) {
         // Emit each character in temp_buf for the return state
@@ -1093,6 +1108,70 @@ impl Tokenizer {
                         return self.emit_current_doctype();
                     }
                     _ => {}
+                },
+
+                // =============================================================
+                // Raw text state (for <script>, <style>, etc.)
+                // =============================================================
+                State::RawText => match self.consume() {
+                    Some('<') => {
+                        if self.peek() == Some('/') {
+                            let saved_pos = self.pos;
+                            self.consume(); // consume '/'
+                            let tag_len = self.rawtext_end_tag.len();
+                            let mut matched = tag_len > 0
+                                && self.pos + tag_len <= self.input.len();
+                            if matched {
+                                for (i, expected_ch) in
+                                    self.rawtext_end_tag.chars().enumerate()
+                                {
+                                    let actual =
+                                        self.input[self.pos + i].to_ascii_lowercase();
+                                    if actual != expected_ch {
+                                        matched = false;
+                                        break;
+                                    }
+                                }
+                            }
+                            if matched {
+                                let after_pos = self.pos + tag_len;
+                                let after_ch = self.input.get(after_pos).copied();
+                                if after_ch == Some('>')
+                                    || after_ch == Some('/')
+                                    || after_ch == Some(' ')
+                                    || after_ch == Some('\t')
+                                    || after_ch == Some('\n')
+                                    || after_ch == Some('\x0C')
+                                    || after_ch.is_none()
+                                {
+                                    self.pos += tag_len;
+                                    while let Some(c) = self.peek() {
+                                        self.consume();
+                                        if c == '>' {
+                                            break;
+                                        }
+                                    }
+                                    self.state = State::Data;
+                                    let end_name = std::mem::take(&mut self.rawtext_end_tag);
+                                    return HtmlToken::EndTag {
+                                        name: end_name,
+                                    };
+                                }
+                            }
+                            self.pos = saved_pos;
+                            return HtmlToken::Character('<');
+                        } else {
+                            return HtmlToken::Character('<');
+                        }
+                    }
+                    Some(c) => {
+                        return HtmlToken::Character(c);
+                    }
+                    None => {
+                        self.state = State::Data;
+                        self.done = true;
+                        return HtmlToken::EOF;
+                    }
                 },
 
                 // =============================================================
