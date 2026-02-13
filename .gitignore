@@ -3,3 +3,8 @@ Cargo.lock
 **/*.rs.bk
 *.pdb
 .cargo/
+
+# AppImage build artifacts
+*.AppImage
+appimagetool-*.AppImage
+*.AppDir/

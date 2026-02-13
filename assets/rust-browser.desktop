@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Rust Browser Engine
+GenericName=Web Browser
+Comment=Browser engine built 100% from scratch in Rust with zero external dependencies
+Exec=rust_browser
+Icon=rust-browser
+Categories=Network;WebBrowser;Development;
+Terminal=true
+StartupNotify=false
+MimeType=text/html;text/xml;application/xhtml+xml;

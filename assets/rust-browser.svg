@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <!-- Main gradient for globe -->
+    <radialGradient id="globeGrad" cx="40%" cy="35%" r="60%">
+      <stop offset="0%" stop-color="#E8633A"/>
+      <stop offset="60%" stop-color="#CE422B"/>
+      <stop offset="100%" stop-color="#9E2A1A"/>
+    </radialGradient>
+    <!-- Highlight gradient -->
+    <radialGradient id="highlight" cx="35%" cy="30%" r="40%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Shadow gradient -->
+    <radialGradient id="shadow" cx="50%" cy="50%" r="50%">
+      <stop offset="80%" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.15"/>
+    </radialGradient>
+    <!-- Gear gradient -->
+    <linearGradient id="gearGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#F5F5F5"/>
+      <stop offset="50%" stop-color="#D0D0D0"/>
+      <stop offset="100%" stop-color="#A0A0A0"/>
+    </linearGradient>
+    <!-- Drop shadow filter -->
+    <filter id="dropShadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="2" dy="4" stdDeviation="6" flood-color="#000" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+
+  <!-- Globe body -->
+  <circle cx="120" cy="120" r="95" fill="url(#globeGrad)" filter="url(#dropShadow)"/>
+
+  <!-- Globe grid lines (meridians and parallels) -->
+  <g fill="none" stroke="#FFFFFF" stroke-opacity="0.25" stroke-width="2">
+    <!-- Equator -->
+    <ellipse cx="120" cy="120" rx="95" ry="12"/>
+    <!-- Parallels -->
+    <ellipse cx="120" cy="82" rx="82" ry="10"/>
+    <ellipse cx="120" cy="158" rx="82" ry="10"/>
+    <!-- Prime meridian -->
+    <ellipse cx="120" cy="120" rx="12" ry="95"/>
+    <!-- Other meridians -->
+    <ellipse cx="120" cy="120" rx="50" ry="95"/>
+    <ellipse cx="120" cy="120" rx="78" ry="95"/>
+  </g>
+
+  <!-- Highlight overlay -->
+  <circle cx="120" cy="120" r="95" fill="url(#highlight)"/>
+  <!-- Edge shadow -->
+  <circle cx="120" cy="120" r="95" fill="url(#shadow)"/>
+
+  <!-- Globe rim -->
+  <circle cx="120" cy="120" r="95" fill="none" stroke="#9E2A1A" stroke-width="2.5" stroke-opacity="0.4"/>
+
+  <!-- Gear (bottom-right, overlapping the globe) -->
+  <g transform="translate(185, 185)" filter="url(#dropShadow)">
+    <!-- Gear teeth (12 teeth around a circle of radius 42) -->
+    <path d="
+      M 0,-46 L 8,-46 L 10,-36 A 36,36 0 0,1 20,-30
+      L 28,-36 L 34,-30 L 28,-22 A 36,36 0 0,1 35,-12
+      L 46,-10 L 46,-2 L 36,0 A 36,36 0 0,1 35,12
+      L 46,10 L 46,18 L 36,20 A 36,36 0 0,1 28,30
+      L 34,38 L 28,42 L 22,34 A 36,36 0 0,1 12,38
+      L 10,48 L 2,48 L 0,38 A 36,36 0 0,1 -12,38
+      L -10,48 L -18,48 L -20,38 A 36,36 0 0,1 -28,30
+      L -34,38 L -40,30 L -32,22 A 36,36 0 0,1 -36,12
+      L -46,10 L -46,2 L -36,0 A 36,36 0 0,1 -36,-12
+      L -46,-10 L -46,-18 L -36,-20 A 36,36 0 0,1 -28,-30
+      L -34,-36 L -28,-42 L -22,-34 A 36,36 0 0,1 -12,-38
+      L -10,-46 Z
+    " fill="url(#gearGrad)" stroke="#888" stroke-width="1.5"/>
+    <!-- Gear center hole -->
+    <circle cx="0" cy="0" r="14" fill="#555"/>
+    <circle cx="0" cy="0" r="10" fill="#777"/>
+    <!-- Gear center dot -->
+    <circle cx="0" cy="0" r="4" fill="#999"/>
+  </g>
+
+  <!-- Subtle "R" letterform in the globe center -->
+  <text x="120" y="138" text-anchor="middle" font-family="sans-serif" font-weight="bold"
+        font-size="56" fill="#FFFFFF" fill-opacity="0.85" letter-spacing="-2">R</text>
+</svg>
