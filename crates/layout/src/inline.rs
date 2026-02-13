@@ -1,6 +1,7 @@
 //! Inline formatting context — line box construction with word wrapping.
 
 use common::Rect;
+use style::TextAlign;
 use crate::tree::{LayoutBoxId, LayoutBoxKind, LayoutTree};
 
 /// A single item positioned on a line.
@@ -98,6 +99,33 @@ pub fn layout_inline_content(
     if !current_line.items.is_empty() {
         current_line.width = cursor_x;
         lines.push(current_line);
+    }
+
+    // Apply text-align offset (inherited, so read from first child).
+    let text_align = children.first()
+        .and_then(|&id| tree.get(id))
+        .map(|b| b.computed_style.text_align)
+        .unwrap_or(TextAlign::Left);
+
+    if text_align != TextAlign::Left {
+        for line in &mut lines {
+            let offset = match text_align {
+                TextAlign::Center => (available_width - line.width).max(0.0) / 2.0,
+                TextAlign::Right => (available_width - line.width).max(0.0),
+                _ => 0.0,
+            };
+            if offset > 0.0 {
+                for item in &mut line.items {
+                    item.x += offset;
+                    if let Some(b) = tree.get_mut(item.box_id) {
+                        b.box_model.content_box.x += offset;
+                        b.box_model.border_box.x += offset;
+                        b.box_model.padding_box.x += offset;
+                        b.box_model.margin_box.x += offset;
+                    }
+                }
+            }
+        }
     }
 
     lines

@@ -16,7 +16,7 @@ use crate::flex::layout_flex;
 /// Returns `(width, height)` of the border box.
 pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width: f32) -> (f32, f32) {
     // Read style values we need.
-    let (margin, padding, border_widths, specified_width, specified_height, display) = {
+    let (margin, padding, border_widths, specified_width, specified_height, display, min_width, max_width) = {
         let b = match tree.get(box_id) {
             Some(b) => b,
             None => return (0.0, 0.0),
@@ -29,6 +29,8 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
             s.width,
             s.height,
             s.display,
+            s.min_width,
+            s.max_width,
         )
     };
 
@@ -36,6 +38,16 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
     let content_width = match specified_width {
         Some(w) => w,
         None => available_content_width(containing_width, &margin, &padding, &border_widths),
+    };
+
+    // Enforce min/max-width constraints.
+    let content_width = match max_width {
+        Some(mw) => content_width.min(mw),
+        None => content_width,
+    };
+    let content_width = match min_width {
+        Some(mw) => content_width.max(mw),
+        None => content_width,
     };
 
     // Collect children for layout.

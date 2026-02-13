@@ -264,6 +264,12 @@ fn apply_declaration(
             }
         }
 
+        "background" => {
+            if let Some(c) = first_color(&decl.value) {
+                style.background_color = c;
+            }
+        }
+
         "font-size" => {
             if let Some(px) = first_length_px(&decl.value, style.font_size_px) {
                 style.font_size_px = px;
@@ -562,7 +568,7 @@ fn apply_initial(style: &mut ComputedStyle, prop: &str) {
         "position" => style.position = def.position,
         "float" => style.float = def.float,
         "color" => style.color = def.color,
-        "background-color" => style.background_color = def.background_color,
+        "background" | "background-color" => style.background_color = def.background_color,
         "font-size" => {
             style.font_size_px = def.font_size_px;
             style.line_height_px = def.line_height_px;

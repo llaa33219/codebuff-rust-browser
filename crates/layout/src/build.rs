@@ -72,6 +72,9 @@ fn build_box(
                 }
             }
 
+            // Split multi-word text runs into per-word boxes for word wrapping.
+            let child_boxes = split_text_run_words(tree, child_boxes);
+
             // If this is a block-level element with mixed block+inline children,
             // wrap consecutive inline children in anonymous block boxes.
             if kind == LayoutBoxKind::Block {
@@ -189,6 +192,42 @@ fn create_anonymous_block(
         tree.append_child(anon, child);
     }
     anon
+}
+
+/// Split multi-word `TextRun` boxes into one box per word so that the inline
+/// layout algorithm can break lines between words.
+fn split_text_run_words(tree: &mut LayoutTree, children: Vec<LayoutBoxId>) -> Vec<LayoutBoxId> {
+    let mut result = Vec::with_capacity(children.len());
+
+    for child_id in children {
+        let info = tree.get(child_id).map(|b| {
+            (b.kind, b.node, b.text.clone(), b.computed_style.clone())
+        });
+
+        match info {
+            Some((LayoutBoxKind::TextRun, Some(node_id), Some(ref text), ref style)) => {
+                let words: Vec<&str> = text.split_whitespace().collect();
+                if words.len() <= 1 {
+                    result.push(child_id);
+                    continue;
+                }
+                for (i, word) in words.iter().enumerate() {
+                    let word_text = if i < words.len() - 1 {
+                        format!("{} ", word)
+                    } else {
+                        word.to_string()
+                    };
+                    let word_box = LayoutBox::text_run(node_id, word_text, style.clone());
+                    result.push(tree.alloc(word_box));
+                }
+            }
+            _ => {
+                result.push(child_id);
+            }
+        }
+    }
+
+    result
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
