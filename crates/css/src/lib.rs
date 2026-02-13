@@ -9,4 +9,4 @@ pub use selector::{
     AttrOp, PseudoClass, PseudoElement, Specificity, compute_specificity,
 };
 pub use value::{CssValue, LengthUnit, CssColor};
-pub use parser::{CssRule, Declaration, Stylesheet, parse_stylesheet};
+pub use parser::{CssRule, Declaration, Stylesheet, parse_stylesheet, parse_declaration_block};

@@ -11,5 +11,5 @@ pub mod cascade;
 pub use computed::*;
 pub use matching::{matches_selector, matches_compound, matches_simple};
 pub use cascade::{
-    MatchedRule, collect_matching_rules, resolve_style, StyleOrigin,
+    apply_declaration, MatchedRule, collect_matching_rules, resolve_style, StyleOrigin,
 };

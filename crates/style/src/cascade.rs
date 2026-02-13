@@ -187,7 +187,7 @@ fn inherit_from_parent(parent: &ComputedStyle) -> ComputedStyle {
 // Apply a single declaration
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn apply_declaration(
+pub fn apply_declaration(
     style: &mut ComputedStyle,
     decl: &Declaration,
     parent_style: Option<&ComputedStyle>,

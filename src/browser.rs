@@ -33,6 +33,7 @@ const UA_CSS: &str = "
     div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, section, article,
     nav, header, footer, main, aside, figure, figcaption,
     blockquote, pre, hr, form, fieldset, table { display: block; }
+    button, input, select, textarea { display: inline-block; }
     h1 { font-size: 32px; font-weight: bold; margin: 16px 0; }
     h2 { font-size: 24px; font-weight: bold; margin: 12px 0; }
     h3 { font-size: 18px; font-weight: bold; margin: 10px 0; }
@@ -1123,7 +1124,20 @@ fn build_style_map(
         match &node.data {
             NodeData::Element(_) => {
                 let matched = style::collect_matching_rules(dom, node_id, sheets);
-                let computed = style::resolve_style(dom, node_id, &matched, parent_style);
+                let mut computed = style::resolve_style(dom, node_id, &matched, parent_style);
+
+                // Apply inline style="" attribute (highest specificity).
+                if let Some(elem) = node.as_element() {
+                    if let Some(style_attr) = elem.attrs.iter().find(|a| a.name == "style") {
+                        let mut tokenizer = css::CssTokenizer::new(&style_attr.value);
+                        let tokens = tokenizer.tokenize_all();
+                        let declarations = css::parse_declaration_block(&tokens);
+                        for decl in &declarations {
+                            style::apply_declaration(&mut computed, decl, parent_style);
+                        }
+                    }
+                }
+
                 style_map.insert(node_id, computed);
             }
             NodeData::Text { .. } => {

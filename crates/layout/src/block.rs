@@ -56,7 +56,7 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
     // Determine if children are all block, all inline, or mixed.
     let has_block_children = children.iter().any(|&c| {
         tree.get(c)
-            .map(|b| matches!(b.kind, LayoutBoxKind::Block | LayoutBoxKind::Flex | LayoutBoxKind::Grid))
+            .map(|b| matches!(b.kind, LayoutBoxKind::Block | LayoutBoxKind::Flex | LayoutBoxKind::Grid | LayoutBoxKind::Anonymous))
             .unwrap_or(false)
     });
 
@@ -179,7 +179,7 @@ fn layout_mixed_children(
         let kind = tree.get(child_id).map(|b| b.kind).unwrap_or(LayoutBoxKind::Block);
 
         match kind {
-            LayoutBoxKind::Block | LayoutBoxKind::Flex | LayoutBoxKind::Grid => {
+            LayoutBoxKind::Block | LayoutBoxKind::Flex | LayoutBoxKind::Grid | LayoutBoxKind::Anonymous => {
                 let (_w, h) = layout_block(tree, child_id, containing_width);
                 if let Some(child_box) = tree.get_mut(child_id) {
                     let dy = cursor_y - child_box.box_model.border_box.y;
