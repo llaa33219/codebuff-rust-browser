@@ -111,6 +111,7 @@ fn build_style_map(
     sheets: &[(css::Stylesheet, style::StyleOrigin)],
 ) -> layout::build::StyleMap {
     let mut style_map: HashMap<dom::NodeId, style::ComputedStyle> = HashMap::new();
+    let mut ctx = style::ResolveContext::new(1280.0, 800.0);
 
     // Insert root default
     style_map.insert(doc_root, style::ComputedStyle::root_default());
@@ -128,7 +129,7 @@ fn build_style_map(
         match &node.data {
             dom::NodeData::Element(_) => {
                 let matched = style::collect_matching_rules(dom, node_id, sheets);
-                let computed = style::resolve_style(dom, node_id, &matched, parent_style);
+                let computed = style::resolve_style(dom, node_id, &matched, parent_style, &mut ctx);
                 style_map.insert(node_id, computed);
             }
             dom::NodeData::Text { .. } => {

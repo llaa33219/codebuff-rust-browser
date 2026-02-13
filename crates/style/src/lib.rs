@@ -12,5 +12,6 @@ pub use computed::*;
 pub use matching::{matches_selector, matches_compound, matches_simple};
 pub use cascade::{
     apply_declaration, MatchedRule, collect_matching_rules, resolve_style, StyleOrigin,
+    ResolveContext, resolve_css_values,
 };
 // All new enums from computed.rs are re-exported via `pub use computed::*` above.

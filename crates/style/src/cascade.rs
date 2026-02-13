@@ -3,6 +3,8 @@
 //! Implements the CSS cascade: importance → origin → specificity → source order.
 //! Handles inheritance of inheritable properties (color, font-*, text-align, line-height).
 
+use std::collections::HashMap;
+
 use css::{
     Declaration, Specificity, Stylesheet, compute_specificity,
     CssValue, CssColor, LengthUnit,
@@ -36,6 +38,125 @@ pub struct MatchedRule {
     pub origin: StyleOrigin,
     pub source_order: usize,
     pub declarations: Vec<Declaration>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ResolveContext — viewport dimensions + custom properties for var() resolution
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Context for resolving CSS functions like `var()` and viewport units.
+pub struct ResolveContext {
+    pub viewport_width: f32,
+    pub viewport_height: f32,
+    pub custom_properties: HashMap<String, Vec<CssValue>>,
+}
+
+impl ResolveContext {
+    pub fn new(vw: f32, vh: f32) -> Self {
+        Self {
+            viewport_width: vw,
+            viewport_height: vh,
+            custom_properties: HashMap::new(),
+        }
+    }
+}
+
+/// Pre-resolve CSS functions (`var()`, viewport units, `calc()`) in a value list.
+pub fn resolve_css_values(values: &[CssValue], ctx: &ResolveContext) -> Vec<CssValue> {
+    let mut result = Vec::new();
+    for v in values {
+        match v {
+            CssValue::Function { name, args } => {
+                let lower = name.to_ascii_lowercase();
+                if lower == "var" {
+                    let var_name = args.iter().find_map(|a| {
+                        if let CssValue::Keyword(k) = a {
+                            if k.starts_with("--") { return Some(k.clone()); }
+                        }
+                        None
+                    });
+                    if let Some(ref var_name) = var_name {
+                        if let Some(val) = ctx.custom_properties.get(var_name) {
+                            result.extend(resolve_css_values(val, ctx));
+                            continue;
+                        }
+                    }
+                    // Fallback: everything after the --name keyword
+                    let mut found_name = false;
+                    let mut fallback = Vec::new();
+                    for a in args {
+                        if found_name {
+                            fallback.push(a.clone());
+                        } else if let CssValue::Keyword(k) = a {
+                            if k.starts_with("--") {
+                                found_name = true;
+                            }
+                        }
+                    }
+                    if !fallback.is_empty() {
+                        result.extend(resolve_css_values(&fallback, ctx));
+                    }
+                } else if lower == "calc" || lower == "-webkit-calc" {
+                    if let Some(px) = eval_simple_calc(args, ctx) {
+                        result.push(CssValue::Length(px as f64, LengthUnit::Px));
+                    } else {
+                        result.push(v.clone());
+                    }
+                } else {
+                    // Other functions (rgb, etc.) — keep as-is
+                    result.push(v.clone());
+                }
+            }
+            CssValue::Length(val, unit) => match unit {
+                LengthUnit::Vw => result.push(CssValue::Length(
+                    *val * ctx.viewport_width as f64 / 100.0,
+                    LengthUnit::Px,
+                )),
+                LengthUnit::Vh => result.push(CssValue::Length(
+                    *val * ctx.viewport_height as f64 / 100.0,
+                    LengthUnit::Px,
+                )),
+                _ => result.push(v.clone()),
+            },
+            _ => result.push(v.clone()),
+        }
+    }
+    result
+}
+
+fn eval_simple_calc(args: &[CssValue], ctx: &ResolveContext) -> Option<f32> {
+    let resolved = resolve_css_values(args, ctx);
+    if resolved.is_empty() {
+        return None;
+    }
+    let mut total: f32 = 0.0;
+    let mut op = '+';
+    for arg in &resolved {
+        let val = match arg {
+            CssValue::Length(v, unit) => Some(match unit {
+                LengthUnit::Px => *v as f32,
+                LengthUnit::Em => *v as f32 * 16.0,
+                LengthUnit::Rem => *v as f32 * 16.0,
+                _ => *v as f32,
+            }),
+            CssValue::Number(n) => Some(*n as f32),
+            CssValue::Percentage(p) => Some(*p as f32),
+            _ => None,
+        };
+        if let Some(v) = val {
+            total = match op {
+                '+' => total + v,
+                '-' => total - v,
+                '*' => total * v,
+                '/' => {
+                    if v != 0.0 { total / v } else { total }
+                }
+                _ => total,
+            };
+            op = '+';
+        }
+    }
+    Some(total)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -102,6 +223,7 @@ pub fn resolve_style(
     _node_id: NodeId,
     matched_rules: &[MatchedRule],
     parent_style: Option<&ComputedStyle>,
+    ctx: &mut ResolveContext,
 ) -> ComputedStyle {
     // Start with inherited values from parent, or defaults.
     let mut style = match parent_style {
@@ -142,12 +264,38 @@ pub fn resolve_style(
             .then(a.3.cmp(&b.3))
     });
 
-    // Apply normal declarations first, then important (later declarations win).
+    // First pass: collect custom properties (--*) from all declarations.
+    for (decl, _, _, _) in normal_decls.iter().chain(important_decls.iter()) {
+        if decl.name.starts_with("--") {
+            let resolved = resolve_css_values(&decl.value, ctx);
+            ctx.custom_properties.insert(decl.name.clone(), resolved);
+        }
+    }
+
+    // Second pass: apply declarations with var()/viewport units resolved.
     for (decl, _, _, _) in &normal_decls {
-        apply_declaration(&mut style, decl, parent_style);
+        if decl.name.starts_with("--") {
+            continue;
+        }
+        let resolved_values = resolve_css_values(&decl.value, ctx);
+        let resolved_decl = Declaration {
+            name: decl.name.clone(),
+            value: resolved_values,
+            important: decl.important,
+        };
+        apply_declaration(&mut style, &resolved_decl, parent_style);
     }
     for (decl, _, _, _) in &important_decls {
-        apply_declaration(&mut style, decl, parent_style);
+        if decl.name.starts_with("--") {
+            continue;
+        }
+        let resolved_values = resolve_css_values(&decl.value, ctx);
+        let resolved_decl = Declaration {
+            name: decl.name.clone(),
+            value: resolved_values,
+            important: decl.important,
+        };
+        apply_declaration(&mut style, &resolved_decl, parent_style);
     }
 
     style
@@ -1038,8 +1186,8 @@ fn resolve_length(value: f64, unit: &LengthUnit, parent_font_size: f32) -> f32 {
         LengthUnit::Px => value as f32,
         LengthUnit::Em => value as f32 * parent_font_size,
         LengthUnit::Rem => value as f32 * 16.0, // root font size default
-        LengthUnit::Vw => value as f32 * 10.0,  // simplified; needs viewport
-        LengthUnit::Vh => value as f32 * 10.0,
+        LengthUnit::Vw => value as f32 * 12.80,  // fallback ~1280px viewport
+        LengthUnit::Vh => value as f32 * 8.00,    // fallback ~800px viewport
         LengthUnit::Percent => value as f32, // caller must handle percentage context
     }
 }
@@ -1216,6 +1364,10 @@ mod tests {
     use css::parse_stylesheet;
     use dom::{Attr, Namespace};
 
+    fn default_ctx() -> ResolveContext {
+        ResolveContext::new(1280.0, 800.0)
+    }
+
     fn build_dom_and_style(
         css_str: &str,
     ) -> (Dom, NodeId, NodeId) {
@@ -1248,7 +1400,7 @@ mod tests {
         let ss = parse_stylesheet("div { display: block; }");
         let sheets = vec![(ss, StyleOrigin::Author)];
         let matched = collect_matching_rules(&dom, div, &sheets);
-        let style = resolve_style(&dom, div, &matched, None);
+        let style = resolve_style(&dom, div, &matched, None, &mut default_ctx());
         assert_eq!(style.display, Display::Block);
     }
 
@@ -1258,7 +1410,7 @@ mod tests {
         let ss = parse_stylesheet("div { color: red; font-size: 20px; }");
         let sheets = vec![(ss, StyleOrigin::Author)];
         let matched = collect_matching_rules(&dom, div, &sheets);
-        let style = resolve_style(&dom, div, &matched, None);
+        let style = resolve_style(&dom, div, &matched, None, &mut default_ctx());
         assert_eq!(style.color, Color::rgb(255, 0, 0));
         assert_eq!(style.font_size_px, 20.0);
     }
@@ -1269,7 +1421,7 @@ mod tests {
         let ss = parse_stylesheet("div { margin: 10px 20px; }");
         let sheets = vec![(ss, StyleOrigin::Author)];
         let matched = collect_matching_rules(&dom, div, &sheets);
-        let style = resolve_style(&dom, div, &matched, None);
+        let style = resolve_style(&dom, div, &matched, None, &mut default_ctx());
         assert_eq!(style.margin.top, 10.0);
         assert_eq!(style.margin.right, 20.0);
         assert_eq!(style.margin.bottom, 10.0);
@@ -1283,11 +1435,11 @@ mod tests {
         let sheets = vec![(ss, StyleOrigin::Author)];
 
         let div_matched = collect_matching_rules(&dom, div, &sheets);
-        let div_style = resolve_style(&dom, div, &div_matched, None);
+        let div_style = resolve_style(&dom, div, &div_matched, None, &mut default_ctx());
         assert_eq!(div_style.color, Color::rgb(0, 0, 255));
 
         let p_matched = collect_matching_rules(&dom, p, &sheets);
-        let p_style = resolve_style(&dom, p, &p_matched, Some(&div_style));
+        let p_style = resolve_style(&dom, p, &p_matched, Some(&div_style), &mut default_ctx());
         // color is inherited
         assert_eq!(p_style.color, Color::rgb(0, 0, 255));
     }
@@ -1299,10 +1451,10 @@ mod tests {
         let sheets = vec![(ss, StyleOrigin::Author)];
 
         let div_matched = collect_matching_rules(&dom, div, &sheets);
-        let div_style = resolve_style(&dom, div, &div_matched, None);
+        let div_style = resolve_style(&dom, div, &div_matched, None, &mut default_ctx());
 
         let p_matched = collect_matching_rules(&dom, p, &sheets);
-        let p_style = resolve_style(&dom, p, &p_matched, Some(&div_style));
+        let p_style = resolve_style(&dom, p, &p_matched, Some(&div_style), &mut default_ctx());
         // margin and background-color are NOT inherited
         assert_eq!(p_style.margin.top, 0.0);
         assert_eq!(p_style.background_color, Color::TRANSPARENT);
@@ -1316,7 +1468,7 @@ mod tests {
         );
         let sheets = vec![(ss, StyleOrigin::Author)];
         let matched = collect_matching_rules(&dom, div, &sheets);
-        let style = resolve_style(&dom, div, &matched, None);
+        let style = resolve_style(&dom, div, &matched, None, &mut default_ctx());
         // !important should win even though #main has higher specificity
         assert_eq!(style.color, Color::rgb(0, 0, 255));
     }
@@ -1327,7 +1479,7 @@ mod tests {
         let ss = parse_stylesheet("div { color: red; } #main { color: blue; }");
         let sheets = vec![(ss, StyleOrigin::Author)];
         let matched = collect_matching_rules(&dom, div, &sheets);
-        let style = resolve_style(&dom, div, &matched, None);
+        let style = resolve_style(&dom, div, &matched, None, &mut default_ctx());
         // #main has higher specificity than div
         assert_eq!(style.color, Color::rgb(0, 0, 255));
     }
@@ -1338,7 +1490,7 @@ mod tests {
         let ss = parse_stylesheet("div { color: red; } div { color: blue; }");
         let sheets = vec![(ss, StyleOrigin::Author)];
         let matched = collect_matching_rules(&dom, div, &sheets);
-        let style = resolve_style(&dom, div, &matched, None);
+        let style = resolve_style(&dom, div, &matched, None, &mut default_ctx());
         // Later rule wins at same specificity
         assert_eq!(style.color, Color::rgb(0, 0, 255));
     }
@@ -1349,7 +1501,7 @@ mod tests {
         let ss = parse_stylesheet("div { opacity: 0.5; }");
         let sheets = vec![(ss, StyleOrigin::Author)];
         let matched = collect_matching_rules(&dom, div, &sheets);
-        let style = resolve_style(&dom, div, &matched, None);
+        let style = resolve_style(&dom, div, &matched, None, &mut default_ctx());
         assert!((style.opacity - 0.5).abs() < 0.01);
     }
 
@@ -1361,7 +1513,7 @@ mod tests {
         );
         let sheets = vec![(ss, StyleOrigin::Author)];
         let matched = collect_matching_rules(&dom, div, &sheets);
-        let style = resolve_style(&dom, div, &matched, None);
+        let style = resolve_style(&dom, div, &matched, None, &mut default_ctx());
         assert_eq!(style.display, Display::Flex);
         assert_eq!(style.flex.direction, FlexDirection::Column);
         assert_eq!(style.flex.justify_content, JustifyContent::Center);

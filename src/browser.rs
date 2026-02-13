@@ -29,20 +29,47 @@ const DOC_ROOT: NodeId = GenIndex { index: 0, generation: 0 };
 /// Default user-agent stylesheet.
 const UA_CSS: &str = "
     html, body { display: block; margin: 0; padding: 0; }
-    head, title, meta, link, style, script { display: none; }
+    head, title, meta, link, style, script, template { display: none; }
+    noscript { display: block; }
     div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, section, article,
     nav, header, footer, main, aside, figure, figcaption,
-    blockquote, pre, hr, form, fieldset, table { display: block; }
+    blockquote, pre, hr, form, fieldset, table, address,
+    details, summary, dialog, dd, dt, dl, search, hgroup,
+    center, menu, dir, listing { display: block; }
     button, input, select, textarea { display: inline-block; }
+    span, a, b, strong, i, em, u, s, strike, small, big, sub, sup,
+    code, tt, kbd, samp, abbr, cite, dfn, mark, q,
+    label, time, data, bdi, bdo, ruby, rb, rp, rt, wbr { display: inline; }
     h1 { font-size: 32px; font-weight: bold; margin: 16px 0; }
     h2 { font-size: 24px; font-weight: bold; margin: 12px 0; }
     h3 { font-size: 18px; font-weight: bold; margin: 10px 0; }
+    h4 { font-size: 16px; font-weight: bold; margin: 8px 0; }
+    h5 { font-size: 14px; font-weight: bold; margin: 6px 0; }
+    h6 { font-size: 12px; font-weight: bold; margin: 4px 0; }
     p  { margin: 8px 0; }
     ul, ol { margin: 8px 0; padding: 0 0 0 24px; }
     li { display: block; margin: 4px 0; }
     a { color: #0066cc; }
+    b, strong { font-weight: bold; }
+    i, em { font-style: italic; }
+    center { text-align: center; }
+    pre, code, tt, kbd, samp { font-family: monospace; }
+    pre { white-space: pre; }
+    small { font-size: 14px; }
+    big { font-size: 18px; }
+    hr { border-top: 1px solid #cccccc; margin: 8px 0; }
     body { font-size: 16px; color: #333333; background-color: #ffffff; }
-    img { display: block; }
+    img { display: inline-block; }
+    table { display: table; border-collapse: collapse; }
+    tr { display: table-row; }
+    td, th { display: table-cell; padding: 2px; }
+    th { font-weight: bold; text-align: center; }
+    u { text-decoration: underline; }
+    s, strike { text-decoration: line-through; }
+    sub { vertical-align: sub; font-size: 14px; }
+    sup { vertical-align: super; font-size: 14px; }
+    mark { background-color: #ffff00; }
+    blockquote { margin: 8px 40px; }
 ";
 
 /// Built-in homepage shown for new tabs.
@@ -584,7 +611,7 @@ impl BrowserEngine {
         }
 
         // Step 3: Build style map
-        let style_map = build_style_map(&dom, DOC_ROOT, &sheets);
+        let style_map = build_style_map(&dom, DOC_ROOT, &sheets, self.width as f32, self.height as f32);
 
         // Step 4: Build layout tree
         let mut layout_tree = layout::build_layout_tree(&dom, DOC_ROOT, &style_map);
@@ -957,7 +984,7 @@ impl BrowserEngine {
             }
 
             // Rebuild style map, layout, and display list.
-            page.style_map = build_style_map(&page.dom, DOC_ROOT, &sheets);
+            page.style_map = build_style_map(&page.dom, DOC_ROOT, &sheets, self.width as f32, self.height as f32);
             let content_width = self.width.saturating_sub(16) as f32;
             let mut layout_tree = layout::build_layout_tree(&page.dom, DOC_ROOT, &page.style_map);
             let (_, content_height) = if let Some(root_id) = layout_tree.root {
@@ -1105,8 +1132,11 @@ fn build_style_map(
     dom: &Dom,
     doc_root: NodeId,
     sheets: &[(css::Stylesheet, style::StyleOrigin)],
+    viewport_width: f32,
+    viewport_height: f32,
 ) -> HashMap<NodeId, ComputedStyle> {
     let mut style_map: HashMap<NodeId, ComputedStyle> = HashMap::new();
+    let mut ctx = style::ResolveContext::new(viewport_width, viewport_height);
 
     // Insert root default
     style_map.insert(doc_root, ComputedStyle::default());
@@ -1124,7 +1154,7 @@ fn build_style_map(
         match &node.data {
             NodeData::Element(_) => {
                 let matched = style::collect_matching_rules(dom, node_id, sheets);
-                let mut computed = style::resolve_style(dom, node_id, &matched, parent_style);
+                let mut computed = style::resolve_style(dom, node_id, &matched, parent_style, &mut ctx);
 
                 // Apply inline style="" attribute (highest specificity).
                 if let Some(elem) = node.as_element() {
@@ -1133,7 +1163,18 @@ fn build_style_map(
                         let tokens = tokenizer.tokenize_all();
                         let declarations = css::parse_declaration_block(&tokens);
                         for decl in &declarations {
-                            style::apply_declaration(&mut computed, decl, parent_style);
+                            if decl.name.starts_with("--") {
+                                let resolved = style::resolve_css_values(&decl.value, &ctx);
+                                ctx.custom_properties.insert(decl.name.clone(), resolved);
+                                continue;
+                            }
+                            let resolved_values = style::resolve_css_values(&decl.value, &ctx);
+                            let resolved_decl = css::Declaration {
+                                name: decl.name.clone(),
+                                value: resolved_values,
+                                important: decl.important,
+                            };
+                            style::apply_declaration(&mut computed, &resolved_decl, parent_style);
                         }
                     }
                 }

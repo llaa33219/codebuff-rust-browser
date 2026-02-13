@@ -437,6 +437,13 @@ pub fn parse_value_from_tokens(tokens: &[crate::token::CssToken]) -> Vec<CssValu
                 }
                 i += 1;
             }
+            CssToken::Comma => {
+                i += 1;
+            }
+            CssToken::Delim(ch) => {
+                values.push(CssValue::Keyword(ch.to_string()));
+                i += 1;
+            }
             _ => {
                 i += 1; // skip unknown tokens
             }
