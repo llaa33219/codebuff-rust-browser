@@ -10,3 +10,4 @@ dom = { path = "../dom" }
 css = { path = "../css" }
 style = { path = "../style" }
 layout = { path = "../layout" }
+font = { path = "../font" }

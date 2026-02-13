@@ -572,20 +572,13 @@ impl X11Connection {
         self.change_property(window, wm_protocols, 4 /* XA_ATOM */, 32, &data)
     }
 
-    /// Read a single X11 event (blocking).
-    pub fn read_event(&mut self) -> Result<X11Event, X11Error> {
-        let mut buf = [0u8; 32];
-        syscall::read_exact(self.fd, &mut buf).map_err(X11Error::Io)?;
-
+    /// Parse a 32-byte X11 event buffer into an `X11Event`.
+    fn parse_event_buf(&self, buf: &[u8; 32]) -> Result<X11Event, X11Error> {
         let code = buf[0] & 0x7f; // strip "sent" flag
-        let mut c = Cursor::new(&buf, Endian::Little);
-        c.skip(1).unwrap(); // skip code byte
 
         match code {
             0 => {
-                // Error
                 let error_code = buf[1];
-                let _seq = u16::from_le_bytes([buf[2], buf[3]]);
                 let resource_id = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
                 let minor_opcode = u16::from_le_bytes([buf[8], buf[9]]);
                 let major_opcode = buf[10];
@@ -598,13 +591,7 @@ impl X11Connection {
             }
             EVENT_KEY_PRESS | EVENT_KEY_RELEASE => {
                 let keycode = buf[1];
-                let _seq = u16::from_le_bytes([buf[2], buf[3]]);
-                let _time = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
-                let _root = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
                 let window = u32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]);
-                let _child = u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]]);
-                let _root_x = i16::from_le_bytes([buf[20], buf[21]]);
-                let _root_y = i16::from_le_bytes([buf[22], buf[23]]);
                 let x = i16::from_le_bytes([buf[24], buf[25]]);
                 let y = i16::from_le_bytes([buf[26], buf[27]]);
                 let state = u16::from_le_bytes([buf[28], buf[29]]);
@@ -653,7 +640,6 @@ impl X11Connection {
                 Ok(X11Event::ConfigureNotify { window, x, y, width, height })
             }
             EVENT_CLIENT_MESSAGE => {
-                let _format = buf[1];
                 let window = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
                 let type_atom = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
                 let mut data = [0u8; 20];
@@ -681,9 +667,145 @@ impl X11Connection {
                 Ok(X11Event::FocusOut { window })
             }
             _ => {
-                Ok(X11Event::Unknown { code, data: buf })
+                Ok(X11Event::Unknown { code, data: *buf })
             }
         }
+    }
+
+    /// Read a single X11 event (blocking).
+    pub fn read_event(&mut self) -> Result<X11Event, X11Error> {
+        let mut buf = [0u8; 32];
+        syscall::read_exact(self.fd, &mut buf).map_err(X11Error::Io)?;
+        self.parse_event_buf(&buf)
+    }
+
+    /// Set the connection socket to non-blocking mode.
+    ///
+    /// Call this once before using [`poll_event`](Self::poll_event).
+    pub fn set_nonblocking(&mut self) -> Result<(), X11Error> {
+        syscall::set_nonblocking(self.fd).map_err(X11Error::Io)
+    }
+
+    /// Read a single X11 event without blocking.
+    ///
+    /// Returns `Ok(None)` if no event is available. The socket must be set to
+    /// non-blocking mode first with [`set_nonblocking`](Self::set_nonblocking).
+    pub fn poll_event(&mut self) -> Result<Option<X11Event>, X11Error> {
+        let mut buf = [0u8; 32];
+        let n = unsafe { syscall::read(self.fd, buf.as_mut_ptr(), 32) };
+        if n < 0 {
+            let err = syscall::errno();
+            if err == 11 {
+                // EAGAIN — no data available
+                return Ok(None);
+            }
+            return Err(X11Error::Io(err));
+        }
+        if n == 0 {
+            return Ok(None);
+        }
+        // Read remaining bytes if we got a partial event
+        let mut offset = n as usize;
+        while offset < 32 {
+            let n2 = unsafe {
+                syscall::read(self.fd, buf[offset..].as_mut_ptr(), 32 - offset)
+            };
+            if n2 < 0 {
+                let err = syscall::errno();
+                if err == 11 {
+                    std::thread::yield_now();
+                    continue;
+                }
+                return Err(X11Error::Io(err));
+            }
+            if n2 == 0 {
+                return Err(X11Error::Io(0));
+            }
+            offset += n2 as usize;
+        }
+        self.parse_event_buf(&buf).map(Some)
+    }
+
+    /// Create an X11 Graphics Context.
+    pub fn create_gc(&mut self, drawable: Drawable) -> Result<GContext, X11Error> {
+        let gc_id = self.alloc_id();
+
+        let mut w = BufWriter::new(Endian::Little);
+        w.u8(OPCODE_CREATE_GC);
+        w.u8(0); // unused
+        w.u16(4); // request length in 4-byte units: 16 bytes / 4
+        w.u32(gc_id);
+        w.u32(drawable);
+        w.u32(0); // value_mask = none
+
+        self.send_request(&w.finish())?;
+        Ok(gc_id)
+    }
+
+    /// Send pixel data to a drawable using X11 PutImage (ZPixmap format).
+    ///
+    /// `data` must be pixel data with 4 bytes per pixel (matches the root
+    /// visual depth). For large images the data is automatically split across
+    /// multiple PutImage requests to stay within the X11 max request size.
+    pub fn put_image(
+        &mut self,
+        drawable: Drawable,
+        gc: GContext,
+        width: u16,
+        height: u16,
+        dst_x: i16,
+        dst_y: i16,
+        data: &[u8],
+    ) -> Result<(), X11Error> {
+        let bytes_per_row = width as usize * 4;
+        if bytes_per_row == 0 || height == 0 {
+            return Ok(());
+        }
+
+        // X11 max request size: 65535 four-byte units = 262140 bytes.
+        // PutImage header is 24 bytes, leaving 262116 bytes for pixel data.
+        let max_data = 262116;
+        let max_rows = (max_data / bytes_per_row).max(1) as u16;
+
+        let mut rows_sent: u16 = 0;
+        while rows_sent < height {
+            let rows_this = max_rows.min(height - rows_sent);
+            let data_offset = rows_sent as usize * bytes_per_row;
+            let data_len = rows_this as usize * bytes_per_row;
+            let chunk = &data[data_offset..data_offset + data_len];
+
+            let data_pad = (4 - (data_len % 4)) % 4;
+            let request_len = (24 + data_len + data_pad) / 4;
+
+            let mut w = BufWriter::new(Endian::Little);
+            w.u8(OPCODE_PUT_IMAGE);
+            w.u8(2); // format = ZPixmap
+            w.u16(request_len as u16);
+            w.u32(drawable);
+            w.u32(gc);
+            w.u16(width);
+            w.u16(rows_this);
+            w.u16(dst_x as u16);
+            w.u16((dst_y + rows_sent as i16) as u16);
+            w.u8(0); // left_pad
+            w.u8(self.root_depth);
+            w.u16(0); // pad
+            w.bytes(chunk);
+            for _ in 0..data_pad {
+                w.u8(0);
+            }
+
+            self.send_request(&w.finish())?;
+            rows_sent += rows_this;
+        }
+
+        Ok(())
+    }
+
+    /// Set the window title (WM_NAME property).
+    pub fn set_window_title(&mut self, window: Window, title: &str) -> Result<(), X11Error> {
+        // WM_NAME atom = 39, STRING atom = 31
+        self.change_property(window, 39, 31, 8, title.as_bytes())
     }
 }
 

@@ -3,6 +3,11 @@
 //! This is the entry point demonstrating all 33 crates working together
 //! in a complete browser engine pipeline.
 
+pub mod chrome;
+pub mod input;
+pub mod hittest;
+pub mod browser;
+
 use std::collections::HashMap;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -847,6 +852,36 @@ fn demo_canvas2d() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.iter().any(|a| a == "--gui") {
+        // GUI browser mode
+        let url = args.iter()
+            .position(|a| a == "--gui")
+            .and_then(|i| args.get(i + 1))
+            .map(|s| s.as_str());
+
+        let width = 1280;
+        let height = 800;
+
+        println!("🌐 Rust Browser — starting GUI ({}×{})", width, height);
+
+        let mut engine = match browser::BrowserEngine::new(width, height) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        if let Some(url) = url {
+            engine.navigate_initial(url);
+        }
+
+        engine.run();
+        return;
+    }
+
     println!();
     println!("🌐 ═══════════════════════════════════════════════════════════");
     println!("   Rust Browser Engine v0.1.0");

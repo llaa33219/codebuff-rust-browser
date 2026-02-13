@@ -6,6 +6,8 @@
 //! inline content → positioned).
 //! Zero external dependencies beyond sibling workspace crates.
 
+pub mod rasterizer;
+
 use common::{Color, Rect};
 use layout::{LayoutTree, LayoutBoxId, LayoutBoxKind, LayoutBox};
 use style::{Display, Position, BorderStyle, Overflow};

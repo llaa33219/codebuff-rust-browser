@@ -72,3 +72,5 @@ encoding = { path = "crates/encoding" }
 image_decode = { path = "crates/image_decode" }
 font = { path = "crates/font" }
 js_builtins = { path = "crates/js_builtins" }
+platform_linux = { path = "crates/platform_linux" }
+gfx_vulkan = { path = "crates/gfx_vulkan" }

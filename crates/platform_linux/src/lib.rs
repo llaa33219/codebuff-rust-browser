@@ -9,4 +9,5 @@ pub mod syscall;
 pub mod epoll;
 pub mod x11;
 pub mod vulkan;
+pub mod keymap;
 
