@@ -136,7 +136,7 @@ pub fn build_client_hello(
 
     // Supported versions extension (TLS 1.3 = 0x0304)
     {
-        let data = vec![0x01, 0x03, 0x04]; // 1 version, TLS 1.3
+        let data = vec![0x02, 0x03, 0x04]; // 1 version (2 bytes), TLS 1.3
         extensions.push(Extension { typ: EXT_SUPPORTED_VERSIONS, data });
     }
 

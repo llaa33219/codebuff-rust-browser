@@ -189,7 +189,7 @@ impl NetworkService {
             dns_resolver: DnsResolver::new(),
             cookie_jar: CookieJar::new(),
             pool: ConnectionPool::new(),
-            user_agent: "RustBrowser/0.1".to_string(),
+            user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 RustBrowser/0.1".to_string(),
             max_redirects: MAX_REDIRECTS,
             connect_timeout: Duration::from_secs(CONNECT_TIMEOUT_SECS),
             read_timeout: Duration::from_secs(READ_TIMEOUT_SECS),
@@ -278,7 +278,8 @@ impl NetworkService {
         // Build headers
         let mut headers = Vec::new();
         headers.push(("User-Agent".to_string(), self.user_agent.clone()));
-        headers.push(("Accept".to_string(), "*/*".to_string()));
+        headers.push(("Accept".to_string(), "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8".to_string()));
+        headers.push(("Accept-Language".to_string(), "en-US,en;q=0.9".to_string()));
         headers.push(("Connection".to_string(), "keep-alive".to_string()));
 
         // Add cookies
@@ -735,7 +736,7 @@ mod tests {
     fn test_network_service_creation() {
         let svc = NetworkService::new();
         assert_eq!(svc.max_redirects, MAX_REDIRECTS);
-        assert_eq!(svc.user_agent, "RustBrowser/0.1");
+        assert!(svc.user_agent.contains("RustBrowser/0.1"));
         assert!(svc.cookie_jar.is_empty());
     }
 

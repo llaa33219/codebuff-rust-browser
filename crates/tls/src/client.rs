@@ -315,102 +315,105 @@ impl<S: Read + Write> TlsClient<S> {
                     // Update transcript
                     transcript.update(&decrypted.payload);
 
-                    // Process handshake message(s) in the record
+                    // Process handshake message(s) in the record.
+                    // A single encrypted record may contain multiple
+                    // concatenated handshake messages (e.g. Google packs
+                    // EncryptedExtensions + Certificate + CertificateVerify
+                    // + Finished into one record).  Parse each using its
+                    // 4-byte header: type(1) + length(3).
                     let payload = &decrypted.payload;
                     if payload.is_empty() {
                         continue;
                     }
 
-                    let hs_type = payload[0];
-                    match hs_type {
-                        8 => {
-                            // EncryptedExtensions
-                            self.state = TlsClientState::GotEncryptedExtensions;
+                    let mut off = 0;
+                    while off + 4 <= payload.len() {
+                        let hs_type = payload[off];
+                        let hs_len = ((payload[off + 1] as usize) << 16)
+                            | ((payload[off + 2] as usize) << 8)
+                            | (payload[off + 3] as usize);
+                        let msg_end = off + 4 + hs_len;
+                        if msg_end > payload.len() {
+                            break;
                         }
-                        11 => {
-                            // Certificate
-                            self.state = TlsClientState::GotCertificate;
-                            // Parse certificate chain (skip 4-byte handshake header)
-                            if payload.len() > 4 {
-                                let _chain =
-                                    x509::parse_certificate_chain(&payload[4..]).ok();
-                                // In a full implementation, verify the chain here
+
+                        match hs_type {
+                            8 => {
+                                self.state = TlsClientState::GotEncryptedExtensions;
                             }
+                            11 => {
+                                self.state = TlsClientState::GotCertificate;
+                                if hs_len > 0 {
+                                    let _chain =
+                                        x509::parse_certificate_chain(&payload[off + 4..msg_end]).ok();
+                                }
+                            }
+                            15 => {
+                                self.state = TlsClientState::GotCertificateVerify;
+                            }
+                            20 => {
+                                // Finished
+                                self.state = TlsClientState::GotFinished;
+
+                                let handshake_hash = transcript.clone().finalize();
+
+                                let full_ks = key_schedule::derive_keys(
+                                    &shared_secret,
+                                    &hello_hash,
+                                    &handshake_hash,
+                                );
+
+                                let server_app_keys = key_schedule::derive_traffic_keys(
+                                    &full_ks.server_app_traffic_secret,
+                                );
+                                let client_app_keys = key_schedule::derive_traffic_keys(
+                                    &full_ks.client_app_traffic_secret,
+                                );
+
+                                let ccs = TlsRecord::new(ContentType::ChangeCipherSpec, vec![1]);
+                                record::write_record(&mut self.stream, &ccs)?;
+
+                                let client_finished_data = key_schedule::compute_finished(
+                                    &full_ks.client_handshake_traffic_secret,
+                                    &handshake_hash,
+                                );
+
+                                let mut finished_msg = Vec::new();
+                                finished_msg.push(HandshakeType::Finished as u8);
+                                let len = client_finished_data.len() as u32;
+                                finished_msg.push((len >> 16) as u8);
+                                finished_msg.push((len >> 8) as u8);
+                                finished_msg.push(len as u8);
+                                finished_msg.extend_from_slice(&client_finished_data);
+
+                                let client_hs_gcm = AesGcm::new(&client_hs_keys.key);
+                                let client_hs_iv: [u8; 12] =
+                                    client_hs_keys.iv[..12].try_into().map_err(|_| {
+                                        io::Error::new(io::ErrorKind::Other, "invalid client HS IV")
+                                    })?;
+                                let finished_nonce = record::make_nonce(&client_hs_iv, 0);
+                                let finished_record =
+                                    TlsRecord::new(ContentType::Handshake, finished_msg);
+                                let encrypted_finished = record::encrypt_record(
+                                    &client_hs_gcm,
+                                    &finished_nonce,
+                                    &finished_record,
+                                );
+                                record::write_record(&mut self.stream, &encrypted_finished)?;
+
+                                self.server_gcm = Some(AesGcm::new(&server_app_keys.key));
+                                self.client_gcm = Some(AesGcm::new(&client_app_keys.key));
+                                self.server_keys = Some(server_app_keys);
+                                self.client_keys = Some(client_app_keys);
+                                self.key_schedule = Some(full_ks);
+                                self.state = TlsClientState::Connected;
+
+                                return Ok(());
+                            }
+                            _ => {}
                         }
-                        15 => {
-                            // CertificateVerify
-                            self.state = TlsClientState::GotCertificateVerify;
-                            // In a full implementation, verify the signature here
-                        }
-                        20 => {
-                            // Finished
-                            self.state = TlsClientState::GotFinished;
 
-                            // Compute the full handshake transcript hash
-                            let handshake_hash = transcript.clone().finalize();
-
-                            // Derive application traffic keys
-                            let full_ks = key_schedule::derive_keys(
-                                &shared_secret,
-                                &hello_hash,
-                                &handshake_hash,
-                            );
-
-                            let server_app_keys = key_schedule::derive_traffic_keys(
-                                &full_ks.server_app_traffic_secret,
-                            );
-                            let client_app_keys = key_schedule::derive_traffic_keys(
-                                &full_ks.client_app_traffic_secret,
-                            );
-
-                            // Send client ChangeCipherSpec (middlebox compat)
-                            let ccs = TlsRecord::new(ContentType::ChangeCipherSpec, vec![1]);
-                            record::write_record(&mut self.stream, &ccs)?;
-
-                            // Send client Finished
-                            let client_finished_data = key_schedule::compute_finished(
-                                &full_ks.client_handshake_traffic_secret,
-                                &handshake_hash,
-                            );
-
-                            // Build Finished handshake message
-                            let mut finished_msg = Vec::new();
-                            finished_msg.push(HandshakeType::Finished as u8);
-                            let len = client_finished_data.len() as u32;
-                            finished_msg.push((len >> 16) as u8);
-                            finished_msg.push((len >> 8) as u8);
-                            finished_msg.push(len as u8);
-                            finished_msg.extend_from_slice(&client_finished_data);
-
-                            // Encrypt and send
-                            let client_hs_gcm = AesGcm::new(&client_hs_keys.key);
-                            let client_hs_iv: [u8; 12] =
-                                client_hs_keys.iv[..12].try_into().map_err(|_| {
-                                    io::Error::new(io::ErrorKind::Other, "invalid client HS IV")
-                                })?;
-                            let finished_nonce = record::make_nonce(&client_hs_iv, 0);
-                            let finished_record =
-                                TlsRecord::new(ContentType::Handshake, finished_msg);
-                            let encrypted_finished = record::encrypt_record(
-                                &client_hs_gcm,
-                                &finished_nonce,
-                                &finished_record,
-                            );
-                            record::write_record(&mut self.stream, &encrypted_finished)?;
-
-                            // Store application keys
-                            self.server_gcm = Some(AesGcm::new(&server_app_keys.key));
-                            self.client_gcm = Some(AesGcm::new(&client_app_keys.key));
-                            self.server_keys = Some(server_app_keys);
-                            self.client_keys = Some(client_app_keys);
-                            self.key_schedule = Some(full_ks);
-                            self.state = TlsClientState::Connected;
-
-                            return Ok(());
-                        }
-                        _ => {
-                            // Unknown handshake message type, skip
-                        }
+                        off = msg_end;
                     }
                 }
                 ContentType::Alert => {
@@ -464,32 +467,26 @@ fn extract_key_share(sh: &ServerHello) -> io::Result<Vec<u8>> {
     ))
 }
 
-/// Generate a deterministic X25519 key pair from hostname + salt.
-///
-/// NOTE: In a real implementation this MUST use a CSPRNG. This is a placeholder
-/// that produces valid X25519 key material for testing/development.
-fn generate_x25519_keypair(hostname: &str) -> ([u8; 32], [u8; 32]) {
-    // Derive a private key from hostname hash (NOT SECURE — placeholder)
-    let mut seed_input = b"tls_x25519_privkey_seed_".to_vec();
-    seed_input.extend_from_slice(hostname.as_bytes());
-    // Mix in some entropy from the address of a stack variable
-    let stack_var: u64 = 0x12345678_9ABCDEF0; // placeholder
-    seed_input.extend_from_slice(&stack_var.to_le_bytes());
+/// Read cryptographically secure random bytes from `/dev/urandom`.
+fn read_urandom(buf: &mut [u8]) {
+    use std::io::Read;
+    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        let _ = f.read_exact(buf);
+    }
+}
 
-    let private_key = sha256(&seed_input);
+/// Generate an ephemeral X25519 key pair using OS entropy.
+fn generate_x25519_keypair(_hostname: &str) -> ([u8; 32], [u8; 32]) {
+    let mut private_key = [0u8; 32];
+    read_urandom(&mut private_key);
 
     // Clamp private key per X25519 spec
-    let mut clamped = private_key;
-    clamped[0] &= 248;
-    clamped[31] &= 127;
-    clamped[31] |= 64;
+    private_key[0] &= 248;
+    private_key[31] &= 127;
+    private_key[31] |= 64;
 
-    // Compute public key: for a real implementation this requires the full
-    // X25519 scalar multiplication on Curve25519. We provide a stub that
-    // returns a valid-looking 32-byte public key.
-    let public_key = compute_x25519_public(&clamped);
-
-    (clamped, public_key)
+    let public_key = compute_x25519_public(&private_key);
+    (private_key, public_key)
 }
 
 /// Compute X25519 public key from private key.
@@ -802,14 +799,11 @@ fn sub_with_borrow(a: u64, b: u64, borrow: bool) -> (u64, bool) {
     (d2, b1 || b2)
 }
 
-/// Generate deterministic random-looking bytes (NOT cryptographically secure).
-/// For a real TLS implementation, use OS entropy source.
-fn generate_random_bytes(hostname: &str, context: &[u8]) -> [u8; 32] {
-    let mut input = Vec::new();
-    input.extend_from_slice(context);
-    input.extend_from_slice(hostname.as_bytes());
-    input.extend_from_slice(b"_entropy_placeholder_");
-    sha256(&input)
+/// Generate random bytes using OS entropy (`/dev/urandom`).
+fn generate_random_bytes(_hostname: &str, _context: &[u8]) -> [u8; 32] {
+    let mut buf = [0u8; 32];
+    read_urandom(&mut buf);
+    buf
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -939,12 +933,12 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_random_bytes_deterministic() {
+    fn test_generate_random_bytes_unique() {
         let r1 = generate_random_bytes("example.com", b"test");
         let r2 = generate_random_bytes("example.com", b"test");
-        assert_eq!(r1, r2);
-
-        let r3 = generate_random_bytes("other.com", b"test");
-        assert_ne!(r1, r3);
+        // Two calls should produce different values (from /dev/urandom).
+        assert_ne!(r1, r2);
+        // Should not be all zeros.
+        assert_ne!(r1, [0u8; 32]);
     }
 }

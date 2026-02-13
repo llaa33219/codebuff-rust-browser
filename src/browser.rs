@@ -385,12 +385,14 @@ impl BrowserEngine {
 
     fn navigate(&mut self, url: &str) {
         // Normalize URL
-        let url = if url == "about:newtab" || url == "about:blank" || url.is_empty() {
+        let mut url = if url == "about:newtab" || url == "about:blank" || url.is_empty() {
             "about:newtab".to_string()
         } else if url.contains("://") {
             url.to_string()
-        } else if url.starts_with("localhost") || url.contains('.') {
+        } else if url.starts_with("localhost") {
             format!("http://{}", url)
+        } else if url.contains('.') {
+            format!("https://{}", url)
         } else {
             format!("http://{}", url)
         };
@@ -425,8 +427,27 @@ impl BrowserEngine {
             match self.fetch_page(&url) {
                 Ok(html) => html,
                 Err(e) => {
-                    self.chrome_state.status_text = format!("Error: {}", e);
-                    error_page_html(&url, &format!("{}", e))
+                    eprintln!("  ⚠ Navigation error for {}: {}", url, e);
+                    // If HTTPS failed, fall back to HTTP.
+                    if url.starts_with("https://") {
+                        let http_url = format!("http://{}", &url["https://".len()..]);
+                        eprintln!("  ↳ Retrying with HTTP: {}", http_url);
+                        match self.fetch_page(&http_url) {
+                            Ok(html) => {
+                                url = http_url;
+                                self.chrome_state.url_text = url.clone();
+                                self.chrome_state.url_cursor = self.chrome_state.url_text.len();
+                                html
+                            }
+                            Err(_) => {
+                                self.chrome_state.status_text = format!("Error: {}", e);
+                                error_page_html(&url, &format!("{}", e))
+                            }
+                        }
+                    } else {
+                        self.chrome_state.status_text = format!("Error: {}", e);
+                        error_page_html(&url, &format!("{}", e))
+                    }
                 }
             }
         };
