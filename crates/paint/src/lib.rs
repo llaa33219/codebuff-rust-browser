@@ -7,6 +7,7 @@
 //! Zero external dependencies beyond sibling workspace crates.
 
 pub mod rasterizer;
+pub mod font_engine;
 
 use common::{Color, Rect};
 use layout::{LayoutTree, LayoutBoxId, LayoutBoxKind, LayoutBox};

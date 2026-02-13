@@ -4,6 +4,7 @@
 //! simple rectangle fills and text placeholders.
 
 use paint::rasterizer::Framebuffer;
+use paint::font_engine::FontEngine;
 use shell::{BrowserShell, TabId};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -145,10 +146,15 @@ pub fn chrome_hit_test(x: i32, y: i32, state: &ChromeState, shell: &BrowserShell
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Render the full browser chrome (tab bar + nav bar + status bar) into fb.
-pub fn render_chrome(fb: &mut Framebuffer, state: &ChromeState, shell: &BrowserShell) {
-    render_tab_bar(fb, state, shell);
-    render_nav_bar(fb, state);
-    render_status_bar(fb, state);
+pub fn render_chrome(
+    fb: &mut Framebuffer,
+    state: &ChromeState,
+    shell: &BrowserShell,
+    mut font_engine: Option<&mut FontEngine>,
+) {
+    render_tab_bar(fb, state, shell, font_engine.as_deref_mut());
+    render_nav_bar(fb, state, font_engine.as_deref_mut());
+    render_status_bar(fb, state, font_engine.as_deref_mut());
 }
 
 fn compute_tab_width(tab_count: usize, window_width: u32) -> u32 {
@@ -160,7 +166,12 @@ fn compute_tab_width(tab_count: usize, window_width: u32) -> u32 {
     w.clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH)
 }
 
-fn render_tab_bar(fb: &mut Framebuffer, state: &ChromeState, shell: &BrowserShell) {
+fn render_tab_bar(
+    fb: &mut Framebuffer,
+    state: &ChromeState,
+    shell: &BrowserShell,
+    mut font_engine: Option<&mut FontEngine>,
+) {
     // Background
     fb.fill_rect(0, 0, state.width, TAB_BAR_HEIGHT, COLOR_TAB_BAR_BG);
 
@@ -176,18 +187,18 @@ fn render_tab_bar(fb: &mut Framebuffer, state: &ChromeState, shell: &BrowserShel
         // Tab background
         fb.fill_rect(tx as i32 + 1, 2, tab_width.saturating_sub(2), TAB_BAR_HEIGHT - 2, color);
 
-        // Tab title (simplified text rendering: draw small rect per char)
+        // Tab title
         let title = if tab.title.is_empty() { "New Tab" } else { &tab.title };
-        draw_text_simple(fb, tx as i32 + 8, 10, title, COLOR_TAB_TEXT, 12, tab_width.saturating_sub(16));
+        draw_chrome_text(fb, tx as i32 + 8, 10, title, COLOR_TAB_TEXT, 12, tab_width.saturating_sub(16), &mut font_engine);
     }
 
     // New tab "+" button
     let plus_x = (tabs.len() as u32) * tab_width;
     fb.fill_rect(plus_x as i32 + 2, 4, BUTTON_SIZE - 4, BUTTON_SIZE - 4, COLOR_NAV_BUTTON);
-    draw_text_simple(fb, plus_x as i32 + 10, 10, "+", COLOR_NAV_BUTTON_TEXT, 14, BUTTON_SIZE);
+    draw_chrome_text(fb, plus_x as i32 + 10, 10, "+", COLOR_NAV_BUTTON_TEXT, 14, BUTTON_SIZE, &mut font_engine);
 }
 
-fn render_nav_bar(fb: &mut Framebuffer, state: &ChromeState) {
+fn render_nav_bar(fb: &mut Framebuffer, state: &ChromeState, mut font_engine: Option<&mut FontEngine>) {
     let y = TAB_BAR_HEIGHT as i32;
 
     // Background
@@ -195,17 +206,17 @@ fn render_nav_bar(fb: &mut Framebuffer, state: &ChromeState) {
 
     // Back button
     fb.fill_rect(4, y + 4, BUTTON_SIZE, BUTTON_SIZE, COLOR_NAV_BUTTON);
-    draw_text_simple(fb, 12, y as u32 + 12, "<", COLOR_NAV_BUTTON_TEXT, 14, BUTTON_SIZE);
+    draw_chrome_text(fb, 12, y as u32 + 12, "<", COLOR_NAV_BUTTON_TEXT, 14, BUTTON_SIZE, &mut font_engine);
 
     // Forward button
     let fx = BUTTON_SIZE + 8;
     fb.fill_rect(fx as i32, y + 4, BUTTON_SIZE, BUTTON_SIZE, COLOR_NAV_BUTTON);
-    draw_text_simple(fb, fx as i32 + 8, y as u32 + 12, ">", COLOR_NAV_BUTTON_TEXT, 14, BUTTON_SIZE);
+    draw_chrome_text(fb, fx as i32 + 8, y as u32 + 12, ">", COLOR_NAV_BUTTON_TEXT, 14, BUTTON_SIZE, &mut font_engine);
 
     // Reload button
     let rx = 2 * BUTTON_SIZE + 12;
     fb.fill_rect(rx as i32, y + 4, BUTTON_SIZE, BUTTON_SIZE, COLOR_NAV_BUTTON);
-    draw_text_simple(fb, rx as i32 + 8, y as u32 + 12, "R", COLOR_NAV_BUTTON_TEXT, 14, BUTTON_SIZE);
+    draw_chrome_text(fb, rx as i32 + 8, y as u32 + 12, "R", COLOR_NAV_BUTTON_TEXT, 14, BUTTON_SIZE, &mut font_engine);
 
     // URL bar
     let url_x = 3 * BUTTON_SIZE + 20;
@@ -218,23 +229,48 @@ fn render_nav_bar(fb: &mut Framebuffer, state: &ChromeState) {
     fb.fill_rect(url_x as i32, y + 4, url_w, BUTTON_SIZE, COLOR_URL_BAR_BG);
 
     // URL text
-    draw_text_simple(fb, url_x as i32 + 4, (y + 12) as u32, &state.url_text, COLOR_URL_TEXT, 13, url_w.saturating_sub(8));
+    draw_chrome_text(fb, url_x as i32 + 4, (y + 12) as u32, &state.url_text, COLOR_URL_TEXT, 13, url_w.saturating_sub(8), &mut font_engine);
 
     // Cursor (when focused)
     if state.url_focused {
-        let cursor_x = url_x as i32 + 4 + (state.url_cursor as i32) * 8; // ~8px per char
+        let cursor_px = if let Some(fe) = font_engine.as_deref_mut() {
+            let prefix: String = state.url_text.chars().take(state.url_cursor).collect();
+            fe.measure_text(&prefix, 13.0) as i32
+        } else {
+            (state.url_cursor as i32) * 8
+        };
+        let cursor_x = url_x as i32 + 4 + cursor_px;
         fb.fill_rect(cursor_x, y + 8, 1, 20, COLOR_URL_CURSOR);
     }
 }
 
-fn render_status_bar(fb: &mut Framebuffer, state: &ChromeState) {
+fn render_status_bar(fb: &mut Framebuffer, state: &ChromeState, mut font_engine: Option<&mut FontEngine>) {
     let y = state.height.saturating_sub(STATUS_BAR_HEIGHT) as i32;
     fb.fill_rect(0, y, state.width, STATUS_BAR_HEIGHT, COLOR_STATUS_BAR_BG);
-    draw_text_simple(fb, 8, (y + 5) as u32, &state.status_text, COLOR_STATUS_TEXT, 11, state.width.saturating_sub(16));
+    draw_chrome_text(fb, 8, (y + 5) as u32, &state.status_text, COLOR_STATUS_TEXT, 11, state.width.saturating_sub(16), &mut font_engine);
+}
+
+/// Draw chrome text using the font engine if available, otherwise fall back to rectangles.
+fn draw_chrome_text(
+    fb: &mut Framebuffer,
+    x: i32,
+    y: u32,
+    text: &str,
+    color: u32,
+    font_size: u32,
+    max_width: u32,
+    font_engine: &mut Option<&mut FontEngine>,
+) {
+    if let Some(fe) = font_engine.as_deref_mut() {
+        let baseline_y = y as i32 + fe.ascent(font_size as f32) as i32;
+        fe.draw_text(fb, text, x, baseline_y, font_size as f32, color, Some(max_width));
+    } else {
+        draw_text_simple(fb, x, y, text, color, font_size, max_width);
+    }
 }
 
 /// Very simple text rendering: draw a small filled rect for each character.
-/// This is a placeholder until proper font rasterization is wired up.
+/// This is a placeholder used when no font engine is available.
 fn draw_text_simple(fb: &mut Framebuffer, x: i32, y: u32, text: &str, color: u32, font_size: u32, max_width: u32) {
     let char_w = (font_size * 6 / 10).max(1);
     let char_h = (font_size * 8 / 10).max(1);

@@ -6,9 +6,15 @@
 //!
 //! Pixel format: **ARGB** (`0xAARRGGBB`), compatible with X11 ZPixmap.
 
+use std::collections::HashMap;
+
 use common::{Color, Rect};
 use style::BorderStyle;
 use crate::DisplayItem;
+use crate::font_engine::FontEngine;
+
+/// Decoded image store: maps image_id → (RGBA8 pixel data, width, height).
+pub type ImageStore = HashMap<u32, (Vec<u8>, u32, u32)>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Color ↔ ARGB helpers
@@ -197,6 +203,67 @@ impl Framebuffer {
         }
     }
 
+    /// Blit RGBA8 image data scaled to fit a destination rectangle.
+    ///
+    /// Uses nearest-neighbor sampling. The source data is in RGBA8 format
+    /// (4 bytes per pixel, row-major). Clipping is applied via the provided
+    /// clip rectangle bounds.
+    pub fn blit_rgba_scaled(
+        &mut self,
+        dst_x: i32,
+        dst_y: i32,
+        dst_w: u32,
+        dst_h: u32,
+        src_data: &[u8],
+        src_w: u32,
+        src_h: u32,
+        clip_x0: i32,
+        clip_y0: i32,
+        clip_x1: i32,
+        clip_y1: i32,
+    ) {
+        if dst_w == 0 || dst_h == 0 || src_w == 0 || src_h == 0 {
+            return;
+        }
+        let expected = (src_w as usize) * (src_h as usize) * 4;
+        if src_data.len() < expected {
+            return;
+        }
+
+        for dy in 0..dst_h {
+            let py = dst_y + dy as i32;
+            if py < clip_y0 || py >= clip_y1 || py < 0 || py >= self.height as i32 {
+                continue;
+            }
+            let sy = ((dy as u64 * src_h as u64) / dst_h as u64).min(src_h as u64 - 1) as u32;
+
+            for dx in 0..dst_w {
+                let px = dst_x + dx as i32;
+                if px < clip_x0 || px >= clip_x1 || px < 0 || px >= self.width as i32 {
+                    continue;
+                }
+                let sx = ((dx as u64 * src_w as u64) / dst_w as u64).min(src_w as u64 - 1) as u32;
+
+                let src_idx = ((sy * src_w + sx) * 4) as usize;
+                let r = src_data[src_idx] as u32;
+                let g = src_data[src_idx + 1] as u32;
+                let b = src_data[src_idx + 2] as u32;
+                let a = src_data[src_idx + 3] as u32;
+                if a == 0 {
+                    continue;
+                }
+
+                let argb = (a << 24) | (r << 16) | (g << 8) | b;
+                let idx = (py as u32 * self.width + px as u32) as usize;
+                if a == 255 {
+                    self.pixels[idx] = argb;
+                } else {
+                    self.pixels[idx] = blend_argb(self.pixels[idx], argb);
+                }
+            }
+        }
+    }
+
     /// Get the raw pixel data as a byte slice (for X11 PutImage).
     pub fn as_bytes(&self) -> &[u8] {
         let ptr = self.pixels.as_ptr() as *const u8;
@@ -255,12 +322,82 @@ pub fn rasterize_display_list(
     };
 
     for item in list {
-        rasterize_item(fb, item, &mut state);
+        rasterize_item(fb, item, &mut state, None, None);
+    }
+}
+
+/// Rasterize a display list with real font rendering.
+///
+/// Pre-caches all text glyphs in the font atlas, then rasterizes with
+/// actual glyph bitmaps instead of placeholder rectangles.
+pub fn rasterize_display_list_with_font(
+    fb: &mut Framebuffer,
+    list: &[DisplayItem],
+    scroll_x: f32,
+    scroll_y: f32,
+    font_engine: &mut FontEngine,
+) {
+    for item in list {
+        if let DisplayItem::TextRun { text, font_size, .. } = item {
+            for ch in text.chars() {
+                font_engine.get_glyph(ch, *font_size);
+            }
+        }
+    }
+
+    let viewport = Rect::new(0.0, 0.0, fb.width as f32, fb.height as f32);
+    let mut state = RasterState {
+        clip_stack: vec![viewport],
+        opacity_stack: vec![1.0],
+        scroll_x,
+        scroll_y,
+    };
+
+    for item in list {
+        rasterize_item(fb, item, &mut state, Some(&*font_engine), None);
+    }
+}
+
+/// Rasterize a display list with real font rendering and decoded images.
+pub fn rasterize_display_list_with_font_and_images(
+    fb: &mut Framebuffer,
+    list: &[DisplayItem],
+    scroll_x: f32,
+    scroll_y: f32,
+    font_engine: &mut FontEngine,
+    images: &ImageStore,
+) {
+    // Pre-cache all text glyphs so the render pass only needs &FontEngine.
+    for item in list {
+        if let DisplayItem::TextRun { text, font_size, .. } = item {
+            for ch in text.chars() {
+                font_engine.get_glyph(ch, *font_size);
+            }
+        }
+    }
+
+    let viewport = Rect::new(0.0, 0.0, fb.width as f32, fb.height as f32);
+    let mut state = RasterState {
+        clip_stack: vec![viewport],
+        opacity_stack: vec![1.0],
+        scroll_x,
+        scroll_y,
+    };
+
+    let img_ref = if images.is_empty() { None } else { Some(images) };
+    for item in list {
+        rasterize_item(fb, item, &mut state, Some(&*font_engine), img_ref);
     }
 }
 
 /// Rasterize a single display item.
-fn rasterize_item(fb: &mut Framebuffer, item: &DisplayItem, state: &mut RasterState) {
+fn rasterize_item(
+    fb: &mut Framebuffer,
+    item: &DisplayItem,
+    state: &mut RasterState,
+    font_engine: Option<&FontEngine>,
+    images: Option<&ImageStore>,
+) {
     match item {
         DisplayItem::SolidRect { rect, color } => {
             let screen = state.to_screen(rect);
@@ -303,37 +440,90 @@ fn rasterize_item(fb: &mut Framebuffer, item: &DisplayItem, state: &mut RasterSt
             let argb = color_to_argb(&c);
             let clip = state.current_clip();
 
-            let char_h = (*font_size * 0.75).ceil() as u32;
-            let char_w = (*font_size * 0.55).ceil() as u32;
+            if let Some(fe) = font_engine {
+                let clip_x0 = clip.x as i32;
+                let clip_y0 = clip.y as i32;
+                let clip_x1 = (clip.x + clip.w).ceil() as i32;
+                let clip_y1 = (clip.y + clip.h).ceil() as i32;
 
-            for glyph in glyphs {
-                let gx = glyph.x - state.scroll_x;
-                let gy = glyph.y - state.scroll_y - *font_size * 0.75;
+                for glyph in glyphs {
+                    let gx = glyph.x - state.scroll_x;
+                    let gy = glyph.y - state.scroll_y;
 
-                let glyph_rect = Rect::new(gx, gy, char_w as f32, char_h as f32);
-                let clipped = clip_rect(&glyph_rect, &clip);
-                if clipped.is_empty() {
-                    continue;
+                    let codepoint = char::from_u32(glyph.glyph_id as u32).unwrap_or('\0');
+                    let glyph_id = fe.cmap_lookup(codepoint);
+                    let key = font::atlas::GlyphKey::new(glyph_id, *font_size);
+
+                    if let Some(entry) = fe.atlas_get(key) {
+                        if entry.w > 0 && entry.h > 0 {
+                            let blit_x = gx as i32 + entry.bearing_x;
+                            let blit_y = gy as i32 - entry.bearing_y;
+                            fe.blit_glyph(
+                                fb, &entry, blit_x, blit_y, argb,
+                                clip_x0, clip_y0, clip_x1, clip_y1,
+                            );
+                        }
+                    }
                 }
+            } else {
+                let char_h = (*font_size * 0.75).ceil() as u32;
+                let char_w = (*font_size * 0.55).ceil() as u32;
 
-                fb.fill_rect(
-                    clipped.x as i32,
-                    clipped.y as i32,
-                    clipped.w.ceil() as u32,
-                    clipped.h.ceil() as u32,
-                    argb,
-                );
+                for glyph in glyphs {
+                    let gx = glyph.x - state.scroll_x;
+                    let gy = glyph.y - state.scroll_y - *font_size * 0.75;
+
+                    let glyph_rect = Rect::new(gx, gy, char_w as f32, char_h as f32);
+                    let clipped = clip_rect(&glyph_rect, &clip);
+                    if clipped.is_empty() {
+                        continue;
+                    }
+
+                    fb.fill_rect(
+                        clipped.x as i32,
+                        clipped.y as i32,
+                        clipped.w.ceil() as u32,
+                        clipped.h.ceil() as u32,
+                        argb,
+                    );
+                }
             }
         }
 
-        DisplayItem::Image { rect, image_id: _ } => {
-            // Placeholder: draw a light gray box with a diagonal cross
+        DisplayItem::Image { rect, image_id } => {
             let screen = state.to_screen(rect);
             let clipped = clip_rect(&screen, &state.current_clip());
             if clipped.is_empty() {
                 return;
             }
             let opacity = state.current_opacity();
+            let clip = state.current_clip();
+            let clip_x0 = clip.x as i32;
+            let clip_y0 = clip.y as i32;
+            let clip_x1 = (clip.x + clip.w).ceil() as i32;
+            let clip_y1 = (clip.y + clip.h).ceil() as i32;
+
+            // Try to blit the actual decoded image.
+            if let Some(store) = images {
+                if let Some((data, src_w, src_h)) = store.get(image_id) {
+                    fb.blit_rgba_scaled(
+                        screen.x as i32,
+                        screen.y as i32,
+                        screen.w.ceil() as u32,
+                        screen.h.ceil() as u32,
+                        data,
+                        *src_w,
+                        *src_h,
+                        clip_x0,
+                        clip_y0,
+                        clip_x1,
+                        clip_y1,
+                    );
+                    return;
+                }
+            }
+
+            // Fallback: draw a light gray placeholder with a border.
             let bg = apply_opacity(&Color::rgba(220, 220, 220, 255), opacity);
             let border = apply_opacity(&Color::rgba(180, 180, 180, 255), opacity);
 
@@ -344,7 +534,6 @@ fn rasterize_item(fb: &mut Framebuffer, item: &DisplayItem, state: &mut RasterSt
                 clipped.h.ceil() as u32,
                 color_to_argb(&bg),
             );
-            // Top/bottom/left/right border
             fb.draw_h_line(
                 screen.x as i32,
                 screen.y as i32,

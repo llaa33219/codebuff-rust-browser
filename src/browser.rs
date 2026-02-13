@@ -9,8 +9,12 @@ use arena::GenIndex;
 use common::Rect;
 use dom::{Dom, NodeId, NodeData};
 use layout::LayoutTree;
-use paint::rasterizer::{Framebuffer, rasterize_display_list};
+use paint::rasterizer::{
+    Framebuffer, ImageStore, rasterize_display_list,
+    rasterize_display_list_with_font_and_images,
+};
 use paint::{DisplayItem, PositionedGlyph};
+use paint::font_engine::FontEngine;
 use platform_linux::x11::X11Connection;
 use shell::{BrowserShell, NavEvent, TabId};
 use style::ComputedStyle;
@@ -18,6 +22,9 @@ use style::ComputedStyle;
 use crate::chrome::{self, ChromeState, ChromeHit, CHROME_HEIGHT, STATUS_BAR_HEIGHT};
 use crate::input::{self, BrowserAction, UrlEdit};
 use crate::hittest;
+
+/// Document root node ID (index 0, generation 0).
+const DOC_ROOT: NodeId = GenIndex { index: 0, generation: 0 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PageData
@@ -29,6 +36,7 @@ pub struct PageData {
     pub style_map: HashMap<NodeId, ComputedStyle>,
     pub layout_tree: LayoutTree,
     pub display_list: Vec<DisplayItem>,
+    pub image_store: ImageStore,
     pub scroll_y: f32,
     pub content_height: f32,
     pub title: String,
@@ -42,6 +50,7 @@ impl PageData {
             style_map: HashMap::new(),
             layout_tree: LayoutTree::new(),
             display_list: Vec::new(),
+            image_store: HashMap::new(),
             scroll_y: 0.0,
             content_height: 0.0,
             title: String::new(),
@@ -66,6 +75,7 @@ pub struct BrowserEngine {
     pages: HashMap<TabId, PageData>,
     chrome_state: ChromeState,
     framebuffer: Framebuffer,
+    font_engine: Option<FontEngine>,
     running: bool,
     needs_render: bool,
     wm_delete_window: u32,
@@ -124,6 +134,17 @@ impl BrowserEngine {
         let chrome_state = ChromeState::new(width, height);
         let framebuffer = Framebuffer::new(width, height);
 
+        let font_engine = match FontEngine::load_system_font() {
+            Ok(fe) => {
+                println!("  ✓ Font engine loaded");
+                Some(fe)
+            }
+            Err(e) => {
+                eprintln!("  ⚠ Font engine unavailable: {e}");
+                None
+            }
+        };
+
         Ok(Self {
             x11,
             window,
@@ -135,6 +156,7 @@ impl BrowserEngine {
             pages: HashMap::new(),
             chrome_state,
             framebuffer,
+            font_engine,
             running: true,
             needs_render: true,
             wm_delete_window,
@@ -336,7 +358,15 @@ impl BrowserEngine {
         };
 
         // Run the rendering pipeline
-        let page_data = self.do_pipeline(&url, &html);
+        let mut page_data = self.do_pipeline(&url, &html);
+
+        // Fetch and decode images referenced by <img> elements.
+        // NOTE: Images are appended to the end of the display list because the
+        // paint pipeline does not yet emit DisplayItem::Image for <img> layout
+        // boxes. This means images render on top of other content (wrong
+        // stacking order). A future fix should emit Image items during
+        // paint_layout_box and only populate image_store here.
+        self.load_page_images(&mut page_data);
 
         // Update tab state
         if let Some(tab) = self.shell.tab_manager.get_tab_mut(tab_id) {
@@ -363,6 +393,68 @@ impl BrowserEngine {
         response.text().map(|s| s.to_string()).map_err(|e| format!("{e}"))
     }
 
+    fn fetch_bytes(&mut self, url: &str) -> Result<Vec<u8>, String> {
+        let request = net::FetchRequest::get(url)?;
+        let response = self.network.fetch(request).map_err(|e| format!("{e}"))?;
+        Ok(response.body)
+    }
+
+    fn load_page_images(&mut self, page: &mut PageData) {
+        let img_elements = page.dom.get_elements_by_tag(DOC_ROOT, "img");
+        let mut next_image_id: u32 = 1;
+
+        for &img_id in &img_elements {
+            let src = page.dom.nodes.get(img_id)
+                .and_then(|n| n.as_element())
+                .and_then(|e| e.attrs.iter().find(|a| a.name == "src"))
+                .map(|a| a.value.clone());
+
+            let src = match src {
+                Some(s) if !s.is_empty() => s,
+                _ => continue,
+            };
+
+            let resolved = resolve_url(&src, &page.url);
+
+            let bytes = match self.fetch_bytes(&resolved) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("  ⚠ Failed to fetch image {}: {}", resolved, e);
+                    continue;
+                }
+            };
+
+            let image = match image_decode::decode(&bytes) {
+                Ok(img) => img,
+                Err(e) => {
+                    eprintln!("  ⚠ Failed to decode image {}: {:?}", resolved, e);
+                    continue;
+                }
+            };
+
+            let rect = find_layout_box_for_node(&page.layout_tree, img_id)
+                .unwrap_or(common::Rect::ZERO);
+
+            let display_rect = if rect.w < 2.0 || rect.h < 2.0 {
+                let w = (image.width as f32).min(800.0);
+                let h = (image.height as f32).min(600.0);
+                common::Rect::new(rect.x, rect.y, w, h)
+            } else {
+                rect
+            };
+
+            let image_id = next_image_id;
+            next_image_id += 1;
+
+            page.display_list.push(DisplayItem::Image {
+                rect: display_rect,
+                image_id,
+            });
+
+            page.image_store.insert(image_id, (image.data, image.width, image.height));
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // Rendering pipeline
     // ─────────────────────────────────────────────────────────────────────
@@ -370,12 +462,8 @@ impl BrowserEngine {
     fn do_pipeline(&self, url: &str, html_source: &str) -> PageData {
         // Step 1: Parse HTML → DOM
         let dom = html::parse(html_source);
-        let doc_root = GenIndex {
-            index: 0,
-            generation: 0,
-        };
 
-        // Step 2: Parse default CSS + extract inline styles
+        // Step 2: Parse default CSS + extract page styles
         let ua_css = "
             html, body { display: block; margin: 0; padding: 0; }
             head, title, meta, link, style, script { display: none; }
@@ -392,15 +480,29 @@ impl BrowserEngine {
             body { font-size: 16px; color: #333333; background-color: #ffffff; }
         ";
         let ua_stylesheet = css::parse_stylesheet(ua_css);
-        let sheets: Vec<(css::Stylesheet, style::StyleOrigin)> = vec![
+        let mut sheets: Vec<(css::Stylesheet, style::StyleOrigin)> = vec![
             (ua_stylesheet, style::StyleOrigin::UserAgent),
         ];
 
+        // Extract <style> elements and parse their CSS.
+        let style_elements = dom.get_elements_by_tag(DOC_ROOT, "style");
+        for &style_id in &style_elements {
+            let children = dom.children(style_id);
+            for child_id in children {
+                if let Some(node) = dom.nodes.get(child_id) {
+                    if let NodeData::Text { data } = &node.data {
+                        let sheet = css::parse_stylesheet(data);
+                        sheets.push((sheet, style::StyleOrigin::Author));
+                    }
+                }
+            }
+        }
+
         // Step 3: Build style map
-        let style_map = build_style_map(&dom, doc_root, &sheets);
+        let style_map = build_style_map(&dom, DOC_ROOT, &sheets);
 
         // Step 4: Build layout tree
-        let mut layout_tree = layout::build_layout_tree(&dom, doc_root, &style_map);
+        let mut layout_tree = layout::build_layout_tree(&dom, DOC_ROOT, &style_map);
 
         // Step 5: Perform layout
         let content_width = self.width.saturating_sub(16) as f32; // small margin
@@ -414,13 +516,17 @@ impl BrowserEngine {
         let display_list = paint::build_display_list(&layout_tree);
 
         // Step 7: Extract title
-        let title = extract_title(&dom, doc_root);
+        let title = extract_title(&dom, DOC_ROOT);
+
+        // Step 8: Execute <script> tags
+        execute_scripts(&dom, DOC_ROOT);
 
         PageData {
             dom,
             style_map,
             layout_tree,
             display_list,
+            image_store: HashMap::new(),
             scroll_y: 0.0,
             content_height,
             title,
@@ -444,12 +550,18 @@ impl BrowserEngine {
                     page,
                     self.width,
                     self.height,
+                    self.font_engine.as_mut(),
                 );
             }
         }
 
         // Render chrome (tab bar, nav bar, status bar) on top
-        chrome::render_chrome(&mut self.framebuffer, &self.chrome_state, &self.shell);
+        chrome::render_chrome(
+            &mut self.framebuffer,
+            &self.chrome_state,
+            &self.shell,
+            self.font_engine.as_mut(),
+        );
 
         // Send to X11
         let _ = self.x11.put_image(
@@ -511,25 +623,7 @@ impl BrowserEngine {
 
                 let result = hittest::hit_test(&page.layout_tree, &page.dom, doc_x, doc_y);
                 if let Some(link_url) = result.link_url {
-                    // Resolve relative URLs
-                    let resolved = if link_url.contains("://") {
-                        link_url
-                    } else if link_url.starts_with('/') {
-                        // Absolute path — prepend origin
-                        if let Ok(req) = net::FetchRequest::get(&page.url) {
-                            let origin = format!(
-                                "{}://{}",
-                                req.url.scheme, req.url.host
-                            );
-                            format!("{}{}", origin, link_url)
-                        } else {
-                            link_url
-                        }
-                    } else {
-                        // Relative path
-                        let base = page.url.rfind('/').map(|i| &page.url[..=i]).unwrap_or(&page.url);
-                        format!("{}{}", base, link_url)
-                    };
+                    let resolved = resolve_url(&link_url, &page.url);
                     self.navigate(&resolved);
                 }
             }
@@ -577,10 +671,8 @@ impl BrowserEngine {
                     Some(p) => p,
                     None => continue,
                 };
-                let doc_root = GenIndex { index: 0, generation: 0 };
-
                 let mut layout_tree = layout::build_layout_tree(
-                    &page.dom, doc_root, &page.style_map,
+                    &page.dom, DOC_ROOT, &page.style_map,
                 );
                 let (_, content_height) = if let Some(root_id) = layout_tree.root {
                     layout::layout_block(&mut layout_tree, root_id, content_width)
@@ -662,6 +754,7 @@ fn render_content_to_fb(
     page: &PageData,
     width: u32,
     height: u32,
+    font_engine: Option<&mut FontEngine>,
 ) {
     let content_top = CHROME_HEIGHT as f32;
     let content_h = height.saturating_sub(CHROME_HEIGHT + STATUS_BAR_HEIGHT) as f32;
@@ -686,7 +779,12 @@ fn render_content_to_fb(
     offset_list.push(DisplayItem::PopClip);
 
     // Rasterize
-    rasterize_display_list(fb, &offset_list, 0.0, 0.0);
+    match font_engine {
+        Some(fe) => rasterize_display_list_with_font_and_images(
+            fb, &offset_list, 0.0, 0.0, fe, &page.image_store,
+        ),
+        None => rasterize_display_list(fb, &offset_list, 0.0, 0.0),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -804,6 +902,87 @@ fn offset_display_item(item: &DisplayItem, dy: f32) -> DisplayItem {
 
         DisplayItem::PopOpacity => DisplayItem::PopOpacity,
     }
+}
+
+/// Resolve a URL relative to a base page URL.
+fn resolve_url(relative: &str, base_url: &str) -> String {
+    if relative.contains("://") {
+        relative.to_string()
+    } else if relative.starts_with('/') {
+        if let Ok(req) = net::FetchRequest::get(base_url) {
+            format!("{}://{}{}", req.url.scheme, req.url.host, relative)
+        } else {
+            relative.to_string()
+        }
+    } else {
+        let base = base_url.rfind('/').map(|i| &base_url[..=i]).unwrap_or(base_url);
+        format!("{}{}", base, relative)
+    }
+}
+
+/// Find the content box of the layout box that corresponds to a DOM node.
+fn find_layout_box_for_node(tree: &LayoutTree, target: NodeId) -> Option<common::Rect> {
+    tree.root.and_then(|root| find_box_recursive(tree, root, target))
+}
+
+fn find_box_recursive(
+    tree: &LayoutTree,
+    box_id: layout::LayoutBoxId,
+    target: NodeId,
+) -> Option<common::Rect> {
+    if let Some(b) = tree.get(box_id) {
+        if b.node == Some(target) {
+            return Some(b.box_model.content_box);
+        }
+        for child in tree.children(box_id) {
+            if let Some(rect) = find_box_recursive(tree, child, target) {
+                return Some(rect);
+            }
+        }
+    }
+    None
+}
+
+/// Execute inline `<script>` tags.
+fn execute_scripts(dom: &Dom, doc_root: NodeId) {
+    let script_elements = dom.get_elements_by_tag(doc_root, "script");
+    for &script_id in &script_elements {
+        // Skip scripts with a src attribute (external scripts not yet supported).
+        if let Some(node) = dom.nodes.get(script_id) {
+            if let Some(elem) = node.as_element() {
+                if elem.attrs.iter().any(|a| a.name == "src") {
+                    continue;
+                }
+            }
+        }
+
+        let children = dom.children(script_id);
+        for child_id in children {
+            if let Some(node) = dom.nodes.get(child_id) {
+                if let NodeData::Text { data } = &node.data {
+                    run_js(data);
+                }
+            }
+        }
+    }
+}
+
+/// Attempt to parse, compile, and execute a JavaScript source string.
+fn run_js(source: &str) {
+    let mut parser = match js_parser::Parser::new(source) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let stmts = match parser.parse_program() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let proto = match js_bytecode::compile_program(&stmts) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let mut vm = js_vm::VM::new();
+    let _ = vm.execute(proto);
 }
 
 /// Extract the page title from the DOM.
