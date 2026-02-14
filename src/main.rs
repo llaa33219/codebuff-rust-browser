@@ -112,9 +112,11 @@ fn build_style_map(
 ) -> layout::build::StyleMap {
     let mut style_map: HashMap<dom::NodeId, style::ComputedStyle> = HashMap::new();
     let mut ctx = style::ResolveContext::new(1280.0, 800.0);
+    let mut node_custom_props: HashMap<dom::NodeId, HashMap<String, Vec<css::CssValue>>> = HashMap::new();
 
     // Insert root default
     style_map.insert(doc_root, style::ComputedStyle::root_default());
+    node_custom_props.insert(doc_root, HashMap::new());
 
     // Pre-order DFS guarantees parents are visited before children
     let descendants = dom.descendants(doc_root);
@@ -124,6 +126,15 @@ fn build_style_map(
             None => continue,
         };
 
+        // Restore parent's custom properties for proper scoping.
+        if let Some(parent_id) = node.parent {
+            if let Some(props) = node_custom_props.get(&parent_id) {
+                ctx.custom_properties = props.clone();
+            }
+        } else {
+            ctx.custom_properties.clear();
+        }
+
         let parent_style = node.parent.and_then(|pid| style_map.get(&pid));
 
         match &node.data {
@@ -131,13 +142,16 @@ fn build_style_map(
                 let matched = style::collect_matching_rules(dom, node_id, sheets);
                 let computed = style::resolve_style(dom, node_id, &matched, parent_style, &mut ctx);
                 style_map.insert(node_id, computed);
+                node_custom_props.insert(node_id, ctx.custom_properties.clone());
             }
             dom::NodeData::Text { .. } => {
                 let inherited = parent_style.cloned().unwrap_or_default();
                 style_map.insert(node_id, inherited);
+                node_custom_props.insert(node_id, ctx.custom_properties.clone());
             }
             dom::NodeData::Document { .. } => {
                 style_map.insert(node_id, style::ComputedStyle::root_default());
+                node_custom_props.insert(node_id, ctx.custom_properties.clone());
             }
             _ => {}
         }

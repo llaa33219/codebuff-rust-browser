@@ -6,6 +6,11 @@ pub enum LengthUnit {
     Rem,
     Vw,
     Vh,
+    Vmin,
+    Vmax,
+    Pt,
+    Ch,
+    Ex,
     Percent,
 }
 
@@ -423,6 +428,11 @@ pub fn parse_value_from_tokens(tokens: &[crate::token::CssToken]) -> Vec<CssValu
                     "rem" => LengthUnit::Rem,
                     "vw" => LengthUnit::Vw,
                     "vh" => LengthUnit::Vh,
+                    "vmin" => LengthUnit::Vmin,
+                    "vmax" => LengthUnit::Vmax,
+                    "pt" => LengthUnit::Pt,
+                    "ch" => LengthUnit::Ch,
+                    "ex" => LengthUnit::Ex,
                     "%" => LengthUnit::Percent,
                     _ => LengthUnit::Px, // default fallback
                 };
@@ -487,6 +497,16 @@ pub fn parse_value_from_tokens(tokens: &[crate::token::CssToken]) -> Vec<CssValu
                 if lower_name == "hsl" || lower_name == "hsla" {
                     if let Some(color) = parse_hsl_function(&func_name, func_tokens) {
                         values.push(CssValue::Color(color));
+                        continue;
+                    }
+                }
+
+                // Handle url("quoted") → CssValue::Url
+                if lower_name == "url" {
+                    if let Some(url_str) = func_tokens.iter().find_map(|t| {
+                        if let CssToken::String(s) = t { Some(s.clone()) } else { None }
+                    }) {
+                        values.push(CssValue::Url(url_str));
                         continue;
                     }
                 }

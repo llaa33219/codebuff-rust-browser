@@ -47,8 +47,13 @@ pub fn layout_inline_content(
     for &child_id in children {
         let (child_width, child_height) = measure_inline_box(tree, child_id, available_width);
 
+        // Check white-space to decide whether wrapping is allowed.
+        let allow_wrap = tree.get(child_id)
+            .map(|b| !matches!(b.computed_style.white_space, style::WhiteSpace::NoWrap | style::WhiteSpace::Pre))
+            .unwrap_or(true);
+
         // Word wrap: if adding this item would exceed the line, start a new line.
-        if cursor_x + child_width > available_width && cursor_x > 0.0 {
+        if allow_wrap && cursor_x + child_width > available_width && cursor_x > 0.0 {
             // Finalize current line.
             current_line.width = cursor_x;
             cursor_y += current_line.height;

@@ -4,14 +4,13 @@
 //! Zero external dependencies beyond sibling workspace crates.
 
 pub mod animation;
+pub mod cascade;
 pub mod computed;
 pub mod matching;
-pub mod cascade;
 
 pub use computed::*;
-pub use matching::{matches_selector, matches_compound, matches_simple};
 pub use cascade::{
-    apply_declaration, MatchedRule, collect_matching_rules, resolve_style, StyleOrigin,
-    ResolveContext, resolve_css_values,
+    StyleOrigin, ResolveContext, MatchedRule, collect_matching_rules, resolve_style,
+    apply_declaration, resolve_css_values, resolve_property_percentages,
 };
-// All new enums from computed.rs are re-exported via `pub use computed::*` above.
+pub use matching::{matches_selector, matches_compound, matches_simple};

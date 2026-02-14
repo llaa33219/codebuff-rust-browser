@@ -36,7 +36,9 @@ const UA_CSS: &str = "
     blockquote, pre, hr, form, fieldset, table, address,
     details, summary, dialog, dd, dt, dl, search, hgroup,
     center, menu, dir, listing { display: block; }
-    button, input, select, textarea { display: inline-block; }
+    button, input, select, textarea { display: inline-block; border: 1px solid #767676; padding: 2px 4px; font-size: 14px; }
+    fieldset { display: block; border: 1px solid #c0c0c0; padding: 8px; margin: 8px 0; }
+    legend { display: block; padding: 0 4px; }
     span, a, b, strong, i, em, u, s, strike, small, big, sub, sup,
     code, tt, kbd, samp, abbr, cite, dfn, mark, q,
     label, time, data, bdi, bdo, ruby, rb, rp, rt, wbr { display: inline; }
@@ -48,7 +50,7 @@ const UA_CSS: &str = "
     h6 { font-size: 12px; font-weight: bold; margin: 4px 0; }
     p  { margin: 8px 0; }
     ul, ol { margin: 8px 0; padding: 0 0 0 24px; }
-    li { display: block; margin: 4px 0; }
+    li { display: list-item; margin: 4px 0; }
     a { color: #0066cc; }
     b, strong { font-weight: bold; }
     i, em { font-style: italic; }
@@ -1138,8 +1140,12 @@ fn build_style_map(
     let mut style_map: HashMap<NodeId, ComputedStyle> = HashMap::new();
     let mut ctx = style::ResolveContext::new(viewport_width, viewport_height);
 
+    // Per-node custom property snapshots for proper CSS variable scoping.
+    let mut node_custom_props: HashMap<NodeId, HashMap<String, Vec<css::CssValue>>> = HashMap::new();
+
     // Insert root default
     style_map.insert(doc_root, ComputedStyle::default());
+    node_custom_props.insert(doc_root, HashMap::new());
 
     // Pre-order DFS guarantees parents are visited before children
     let descendants = dom.descendants(doc_root);
@@ -1148,6 +1154,15 @@ fn build_style_map(
             Some(n) => n,
             None => continue,
         };
+
+        // Restore parent's custom properties for proper scoping.
+        if let Some(parent_id) = node.parent {
+            if let Some(props) = node_custom_props.get(&parent_id) {
+                ctx.custom_properties = props.clone();
+            }
+        } else {
+            ctx.custom_properties.clear();
+        }
 
         let parent_style = node.parent.and_then(|pid| style_map.get(&pid));
 
@@ -1169,6 +1184,7 @@ fn build_style_map(
                                 continue;
                             }
                             let resolved_values = style::resolve_css_values(&decl.value, &ctx);
+                            let resolved_values = style::resolve_property_percentages(&decl.name, &resolved_values, &ctx);
                             let resolved_decl = css::Declaration {
                                 name: decl.name.clone(),
                                 value: resolved_values,
@@ -1180,14 +1196,17 @@ fn build_style_map(
                 }
 
                 style_map.insert(node_id, computed);
+                node_custom_props.insert(node_id, ctx.custom_properties.clone());
             }
             NodeData::Text { .. } => {
                 // Text nodes inherit their parent's style.
                 let inherited = parent_style.cloned().unwrap_or_default();
                 style_map.insert(node_id, inherited);
+                node_custom_props.insert(node_id, ctx.custom_properties.clone());
             }
             NodeData::Document { .. } => {
                 style_map.insert(node_id, ComputedStyle::default());
+                node_custom_props.insert(node_id, ctx.custom_properties.clone());
             }
             _ => {}
         }

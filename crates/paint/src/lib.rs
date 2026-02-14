@@ -253,6 +253,35 @@ fn paint_text(layout_box: &LayoutBox, list: &mut DisplayList) {
         font_size,
         glyphs,
     });
+
+    // Paint text-decoration (underline, overline, line-through).
+    let text_width = x_offset.min(content_box.w);
+    match style.text_decoration {
+        style::TextDecoration::Underline => {
+            let line_y = content_box.y + font_size + 2.0;
+            let thickness = (font_size / 14.0).max(1.0);
+            list.push(DisplayItem::SolidRect {
+                rect: Rect::new(content_box.x, line_y, text_width, thickness),
+                color: style.color,
+            });
+        }
+        style::TextDecoration::Overline => {
+            let thickness = (font_size / 14.0).max(1.0);
+            list.push(DisplayItem::SolidRect {
+                rect: Rect::new(content_box.x, content_box.y, text_width, thickness),
+                color: style.color,
+            });
+        }
+        style::TextDecoration::LineThrough => {
+            let line_y = content_box.y + font_size * 0.55;
+            let thickness = (font_size / 14.0).max(1.0);
+            list.push(DisplayItem::SolidRect {
+                rect: Rect::new(content_box.x, line_y, text_width, thickness),
+                color: style.color,
+            });
+        }
+        style::TextDecoration::None => {}
+    }
 }
 
 /// Paint children of a layout box in stacking order.

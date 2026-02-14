@@ -16,7 +16,7 @@ use crate::flex::layout_flex;
 /// Returns `(width, height)` of the border box.
 pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width: f32) -> (f32, f32) {
     // Read style values we need.
-    let (margin, padding, border_widths, specified_width, specified_height, display, min_width, max_width) = {
+    let (margin, padding, border_widths, specified_width, specified_height, display, min_width, max_width, box_sizing) = {
         let b = match tree.get(box_id) {
             Some(b) => b,
             None => return (0.0, 0.0),
@@ -31,13 +31,29 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
             s.display,
             s.min_width,
             s.max_width,
+            s.box_sizing,
         )
     };
 
+    // Sanitize margins: replace auto sentinels (INFINITY) with 0 for width calculation.
+    let safe_margin = Edges {
+        top: if margin.top.is_infinite() { 0.0 } else { margin.top },
+        right: if margin.right.is_infinite() { 0.0 } else { margin.right },
+        bottom: if margin.bottom.is_infinite() { 0.0 } else { margin.bottom },
+        left: if margin.left.is_infinite() { 0.0 } else { margin.left },
+    };
+
     // Determine content width.
+    // When box-sizing is border-box, the specified width includes padding + border.
     let content_width = match specified_width {
-        Some(w) => w,
-        None => available_content_width(containing_width, &margin, &padding, &border_widths),
+        Some(w) => {
+            if box_sizing == style::BoxSizing::BorderBox {
+                (w - padding.left - padding.right - border_widths.left - border_widths.right).max(0.0)
+            } else {
+                w
+            }
+        }
+        None => available_content_width(containing_width, &safe_margin, &padding, &border_widths),
     };
 
     // Enforce min/max-width constraints.
@@ -84,7 +100,16 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
         content_height = layout_mixed_children(tree, &children, content_width);
     }
 
-    let final_height = specified_height.unwrap_or(content_height);
+    let final_height = match specified_height {
+        Some(h) => {
+            if box_sizing == style::BoxSizing::BorderBox {
+                (h - padding.top - padding.bottom - border_widths.top - border_widths.bottom).max(0.0)
+            } else {
+                h
+            }
+        }
+        None => content_height,
+    };
 
     // Compute the margin for auto-centering.
     let final_margin = resolve_auto_margins(&margin, &padding, &border_widths, content_width, containing_width);
@@ -118,7 +143,10 @@ fn layout_block_children(
     for (i, &child_id) in children.iter().enumerate() {
         let child_margin_top = tree
             .get(child_id)
-            .map(|b| b.computed_style.margin.top)
+            .map(|b| {
+                let m = b.computed_style.margin.top;
+                if m.is_infinite() { 0.0 } else { m }
+            })
             .unwrap_or(0.0);
 
         // Collapse margins between siblings.
@@ -146,7 +174,10 @@ fn layout_block_children(
 
         prev_margin_bottom = tree
             .get(child_id)
-            .map(|b| b.computed_style.margin.bottom)
+            .map(|b| {
+                let m = b.computed_style.margin.bottom;
+                if m.is_infinite() { 0.0 } else { m }
+            })
             .unwrap_or(0.0);
     }
 
@@ -229,8 +260,9 @@ pub fn collapse_margins(m1: f32, m2: f32) -> f32 {
 }
 
 /// Resolve `auto` margins for horizontal centering.
-/// If the element has a specified width narrower than the containing block,
-/// distribute the remaining space equally to left and right margins.
+/// Auto margins are represented by the `f32::INFINITY` sentinel value.
+/// If both left and right margins are auto, the element is centered.
+/// If only one is auto, it absorbs the remaining space.
 fn resolve_auto_margins(
     margin: &Edges<f32>,
     padding: &Edges<f32>,
@@ -238,29 +270,41 @@ fn resolve_auto_margins(
     content_width: f32,
     containing_width: f32,
 ) -> Edges<f32> {
-    let used_width = content_width
-        + padding.left + padding.right
-        + border.left + border.right
-        + margin.left + margin.right;
+    let left_auto = margin.left.is_infinite();
+    let right_auto = margin.right.is_infinite();
 
-    if used_width < containing_width {
-        let remaining = containing_width - content_width
-            - padding.left - padding.right
-            - border.left - border.right;
+    let mut result = *margin;
+    // Clear infinities for vertical margins (auto vertical margins resolve to 0).
+    if result.top.is_infinite() {
+        result.top = 0.0;
+    }
+    if result.bottom.is_infinite() {
+        result.bottom = 0.0;
+    }
 
-        // If both margins are 0 (auto), center.
-        if margin.left == 0.0 && margin.right == 0.0 {
+    if left_auto || right_auto {
+        // Compute used width without the auto margins.
+        let used = content_width
+            + padding.left
+            + padding.right
+            + border.left
+            + border.right
+            + if left_auto { 0.0 } else { margin.left }
+            + if right_auto { 0.0 } else { margin.right };
+        let remaining = (containing_width - used).max(0.0);
+
+        if left_auto && right_auto {
             let half = remaining / 2.0;
-            return Edges {
-                top: margin.top,
-                right: half,
-                bottom: margin.bottom,
-                left: half,
-            };
+            result.left = half;
+            result.right = half;
+        } else if left_auto {
+            result.left = remaining;
+        } else {
+            result.right = remaining;
         }
     }
 
-    *margin
+    result
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

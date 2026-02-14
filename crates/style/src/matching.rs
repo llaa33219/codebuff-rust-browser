@@ -191,13 +191,18 @@ fn matches_pseudo_class(
     match pc {
         // Dynamic pseudo-classes require runtime state; we don't match them
         // during static style resolution (they are handled at paint/event time).
-        PseudoClass::Hover | PseudoClass::Active | PseudoClass::Focus => false,
+        PseudoClass::Hover | PseudoClass::Active | PseudoClass::Focus
+        | PseudoClass::FocusVisible | PseudoClass::FocusWithin => false,
 
-        PseudoClass::Link | PseudoClass::Visited => {
+        // Form pseudo-classes need runtime state.
+        PseudoClass::Enabled | PseudoClass::Disabled
+        | PseudoClass::Checked | PseudoClass::Placeholder => false,
+
+        PseudoClass::Link | PseudoClass::Visited | PseudoClass::AnyLink => {
             // :link matches <a> with href — simplified
             if let Some(node) = dom.nodes.get(node_id) {
                 if let Some(elem) = node.as_element() {
-                    return elem.tag_name == "a"
+                    return (elem.tag_name == "a" || elem.tag_name == "area")
                         && elem.attrs.iter().any(|a| a.name == "href");
                 }
             }
@@ -219,6 +224,20 @@ fn matches_pseudo_class(
         PseudoClass::FirstChild => is_first_child_element(dom, node_id),
 
         PseudoClass::LastChild => is_last_child_element(dom, node_id),
+
+        PseudoClass::OnlyChild => {
+            is_first_child_element(dom, node_id) && is_last_child_element(dom, node_id)
+        }
+
+        PseudoClass::FirstOfType => is_first_of_type(dom, node_id),
+
+        PseudoClass::LastOfType => is_last_of_type(dom, node_id),
+
+        PseudoClass::OnlyOfType => {
+            is_first_of_type(dom, node_id) && is_last_of_type(dom, node_id)
+        }
+
+        PseudoClass::Empty => is_empty_element(dom, node_id),
 
         PseudoClass::NthChild(a, b) => {
             let index = child_element_index(dom, node_id);
@@ -322,6 +341,76 @@ fn is_last_child_element(dom: &Dom, node_id: NodeId) -> bool {
         }
     }
     false
+}
+
+/// Is this node the first element of its type among siblings?
+fn is_first_of_type(dom: &Dom, node_id: NodeId) -> bool {
+    let node = match dom.nodes.get(node_id) {
+        Some(n) => n,
+        None => return false,
+    };
+    let tag = match node.as_element() {
+        Some(e) => &e.tag_name,
+        None => return false,
+    };
+    let parent_id = match node.parent {
+        Some(p) => p,
+        None => return false,
+    };
+    let children = dom.children(parent_id);
+    for child_id in children {
+        if let Some(child) = dom.nodes.get(child_id) {
+            if let Some(elem) = child.as_element() {
+                if elem.tag_name == *tag {
+                    return child_id == node_id;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Is this node the last element of its type among siblings?
+fn is_last_of_type(dom: &Dom, node_id: NodeId) -> bool {
+    let node = match dom.nodes.get(node_id) {
+        Some(n) => n,
+        None => return false,
+    };
+    let tag = match node.as_element() {
+        Some(e) => &e.tag_name,
+        None => return false,
+    };
+    let parent_id = match node.parent {
+        Some(p) => p,
+        None => return false,
+    };
+    let children = dom.children(parent_id);
+    for child_id in children.iter().rev() {
+        if let Some(child) = dom.nodes.get(*child_id) {
+            if let Some(elem) = child.as_element() {
+                if elem.tag_name == *tag {
+                    return *child_id == node_id;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Is this element empty (no children or only whitespace text nodes)?
+fn is_empty_element(dom: &Dom, node_id: NodeId) -> bool {
+    let children = dom.children(node_id);
+    if children.is_empty() {
+        return true;
+    }
+    children.iter().all(|&c| {
+        dom.nodes.get(c).map(|n| {
+            match &n.data {
+                NodeData::Text { data } => data.trim().is_empty(),
+                _ => false,
+            }
+        }).unwrap_or(true)
+    })
 }
 
 /// 0-based index among sibling elements.

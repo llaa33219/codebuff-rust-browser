@@ -116,6 +116,14 @@ pub fn resolve_css_values(values: &[CssValue], ctx: &ResolveContext) -> Vec<CssV
                     *val * ctx.viewport_height as f64 / 100.0,
                     LengthUnit::Px,
                 )),
+                LengthUnit::Vmin => result.push(CssValue::Length(
+                    *val * (ctx.viewport_width.min(ctx.viewport_height)) as f64 / 100.0,
+                    LengthUnit::Px,
+                )),
+                LengthUnit::Vmax => result.push(CssValue::Length(
+                    *val * (ctx.viewport_width.max(ctx.viewport_height)) as f64 / 100.0,
+                    LengthUnit::Px,
+                )),
                 _ => result.push(v.clone()),
             },
             _ => result.push(v.clone()),
@@ -157,6 +165,38 @@ fn eval_simple_calc(args: &[CssValue], ctx: &ResolveContext) -> Option<f32> {
         }
     }
     Some(total)
+}
+
+/// Pre-resolve CSS percentage values for properties where the percentage base
+/// is known (viewport-relative).  Must be called after `resolve_css_values`
+/// but before `apply_declaration`.
+pub fn resolve_property_percentages(
+    name: &str,
+    values: &[CssValue],
+    ctx: &ResolveContext,
+) -> Vec<CssValue> {
+    let prop = strip_vendor_prefix(name);
+    // Per CSS spec, margin/padding percentages are always relative to the
+    // containing block's *width* (even for top/bottom).
+    let percent_base = match prop.as_str() {
+        "width" | "min-width" | "max-width" | "left" | "right"
+        | "margin" | "margin-left" | "margin-right" | "margin-top" | "margin-bottom"
+        | "padding" | "padding-left" | "padding-right" | "padding-top" | "padding-bottom" => {
+            ctx.viewport_width
+        }
+        "height" | "min-height" | "max-height" | "top" | "bottom" => ctx.viewport_height,
+        _ => return values.to_vec(),
+    };
+
+    values
+        .iter()
+        .map(|v| match v {
+            CssValue::Percentage(p) => {
+                CssValue::Length((*p / 100.0) * percent_base as f64, LengthUnit::Px)
+            }
+            _ => v.clone(),
+        })
+        .collect()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -278,6 +318,7 @@ pub fn resolve_style(
             continue;
         }
         let resolved_values = resolve_css_values(&decl.value, ctx);
+        let resolved_values = resolve_property_percentages(&decl.name, &resolved_values, ctx);
         let resolved_decl = Declaration {
             name: decl.name.clone(),
             value: resolved_values,
@@ -290,6 +331,7 @@ pub fn resolve_style(
             continue;
         }
         let resolved_values = resolve_css_values(&decl.value, ctx);
+        let resolved_values = resolve_property_percentages(&decl.name, &resolved_values, ctx);
         let resolved_decl = Declaration {
             name: decl.name.clone(),
             value: resolved_values,
@@ -349,24 +391,36 @@ pub fn apply_declaration(
     decl: &Declaration,
     parent_style: Option<&ComputedStyle>,
 ) {
-    // Handle `inherit` / `initial` for any property.
+    let prop_name = strip_vendor_prefix(&decl.name);
+
+    // Handle `inherit` / `initial` / `unset` for any property.
     if decl.value.len() == 1 {
         match &decl.value[0] {
             CssValue::Inherit => {
                 if let Some(ps) = parent_style {
-                    apply_inherit(style, &decl.name, ps);
+                    apply_inherit(style, &prop_name, ps);
                 }
                 return;
             }
             CssValue::Initial => {
-                apply_initial(style, &decl.name);
+                apply_initial(style, &prop_name);
+                return;
+            }
+            CssValue::Unset => {
+                if is_inherited_property(&prop_name) {
+                    if let Some(ps) = parent_style {
+                        apply_inherit(style, &prop_name, ps);
+                    }
+                } else {
+                    apply_initial(style, &prop_name);
+                }
                 return;
             }
             _ => {}
         }
     }
 
-    match decl.name.as_str() {
+    match prop_name.as_str() {
         "display" => {
             if let Some(kw) = first_keyword(&decl.value) {
                 style.display = match kw {
@@ -378,6 +432,14 @@ pub fn apply_declaration(
                     "inline-flex" => Display::InlineFlex,
                     "grid" => Display::Grid,
                     "inline-grid" => Display::InlineGrid,
+                    "list-item" => Display::Block,
+                    "table" | "table-row-group" | "table-header-group"
+                    | "table-footer-group" | "table-column"
+                    | "table-column-group" | "table-caption" => Display::Block,
+                    "table-row" => Display::Block,
+                    "table-cell" => Display::Block,
+                    "contents" => Display::Block,
+                    "flow-root" => Display::Block,
                     _ => style.display,
                 };
             } else if matches!(decl.value.first(), Some(CssValue::None)) {
@@ -416,22 +478,63 @@ pub fn apply_declaration(
         }
 
         "background-color" => {
-            if let Some(c) = first_color(&decl.value) {
+            if let Some(c) = first_color_or_current(&decl.value, style.color) {
                 style.background_color = c;
             }
         }
 
         "background" => {
-            if let Some(c) = first_color(&decl.value) {
-                style.background_color = c;
+            for v in &decl.value {
+                match v {
+                    CssValue::Color(c) => style.background_color = css_color_to_color(c),
+                    CssValue::Keyword(kw) if kw == "transparent" => {
+                        style.background_color = Color::TRANSPARENT;
+                    }
+                    CssValue::Keyword(kw) if kw == "currentcolor" => {
+                        style.background_color = style.color;
+                    }
+                    CssValue::None => {
+                        style.background_color = Color::TRANSPARENT;
+                    }
+                    CssValue::Url(_) => {
+                        // background-image URL — silently accept
+                    }
+                    _ => {}
+                }
             }
         }
 
         "font-size" => {
-            if let Some(px) = first_length_px(&decl.value, style.font_size_px) {
-                style.font_size_px = px;
-                // Update line-height proportionally (1.2 * font-size).
-                style.line_height_px = px * 1.2;
+            let mut handled = false;
+            if let Some(kw) = first_keyword(&decl.value) {
+                let px = match kw {
+                    "xx-small" => Some(9.0),
+                    "x-small" => Some(10.0),
+                    "small" => Some(13.0),
+                    "medium" => Some(16.0),
+                    "large" => Some(18.0),
+                    "x-large" => Some(24.0),
+                    "xx-large" => Some(32.0),
+                    "xxx-large" => Some(48.0),
+                    "smaller" => Some(style.font_size_px * 0.833),
+                    "larger" => Some(style.font_size_px * 1.2),
+                    _ => None,
+                };
+                if let Some(px) = px {
+                    style.font_size_px = px;
+                    style.line_height_px = px * 1.2;
+                    handled = true;
+                }
+            }
+            if !handled {
+                if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                    let px = (*p as f32 / 100.0) * style.font_size_px;
+                    style.font_size_px = px;
+                    style.line_height_px = px * 1.2;
+                } else if let Some(px) = first_length_px(&decl.value, style.font_size_px) {
+                    style.font_size_px = px;
+                    style.line_height_px = px * 1.2;
+                }
             }
         }
 
@@ -442,14 +545,18 @@ pub fn apply_declaration(
         }
 
         "font-family" => {
-            if let Some(fam) = first_string_or_keyword(&decl.value) {
-                style.font_family = fam;
+            let families = collect_font_families(&decl.value);
+            if !families.is_empty() {
+                style.font_family = families;
             }
         }
 
         "line-height" => {
             if let Some(v) = &decl.value.first() {
                 match v {
+                    CssValue::Keyword(kw) if kw == "normal" => {
+                        style.line_height_px = style.font_size_px * 1.2;
+                    }
                     CssValue::Number(n) => {
                         style.line_height_px = *n as f32 * style.font_size_px;
                     }
@@ -467,8 +574,8 @@ pub fn apply_declaration(
         "text-align" => {
             if let Some(kw) = first_keyword(&decl.value) {
                 style.text_align = match kw {
-                    "left" => TextAlign::Left,
-                    "right" => TextAlign::Right,
+                    "left" | "start" => TextAlign::Left,
+                    "right" | "end" => TextAlign::Right,
                     "center" => TextAlign::Center,
                     "justify" => TextAlign::Justify,
                     _ => style.text_align,
@@ -476,7 +583,16 @@ pub fn apply_declaration(
             }
         }
 
-        "margin" => apply_edge_shorthand(&decl.value, &mut style.margin, style.font_size_px),
+        "margin" => {
+            let vals = collect_edge_values_with_auto(&decl.value, style.font_size_px);
+            if !vals.is_empty() {
+                let (t, r, b, l) = expand_shorthand_4(&vals);
+                style.margin.top = t;
+                style.margin.right = r;
+                style.margin.bottom = b;
+                style.margin.left = l;
+            }
+        }
         "margin-top" => {
             if let Some(v) = first_length_or_auto(&decl.value, style.font_size_px) {
                 style.margin.top = v;
@@ -542,7 +658,7 @@ pub fn apply_declaration(
         }
 
         "border-color" => {
-            if let Some(c) = first_color(&decl.value) {
+            if let Some(c) = first_color_or_current(&decl.value, style.color) {
                 style.border.top.color = c;
                 style.border.right.color = c;
                 style.border.bottom.color = c;
@@ -551,42 +667,18 @@ pub fn apply_declaration(
         }
 
         "border" => {
-            // Shorthand: width style color
-            for v in &decl.value {
-                match v {
-                    CssValue::Length(val, unit) => {
-                        let px = resolve_length(*val, unit, style.font_size_px);
-                        style.border.top.width = px;
-                        style.border.right.width = px;
-                        style.border.bottom.width = px;
-                        style.border.left.width = px;
-                    }
-                    CssValue::Number(n) => {
-                        let px = *n as f32;
-                        style.border.top.width = px;
-                        style.border.right.width = px;
-                        style.border.bottom.width = px;
-                        style.border.left.width = px;
-                    }
-                    CssValue::Keyword(kw) => {
-                        let bs = parse_border_style(kw);
-                        if bs != BorderStyle::None {
-                            style.border.top.style = bs;
-                            style.border.right.style = bs;
-                            style.border.bottom.style = bs;
-                            style.border.left.style = bs;
-                        }
-                    }
-                    CssValue::Color(c) => {
-                        let color = css_color_to_color(c);
-                        style.border.top.color = color;
-                        style.border.right.color = color;
-                        style.border.bottom.color = color;
-                        style.border.left.color = color;
-                    }
-                    _ => {}
-                }
-            }
+            // Per CSS spec, shorthand resets omitted values to initial.
+            // Initial border-color is currentColor, initial border-width is
+            // medium (3px), initial border-style is none.
+            let reset = BorderSide { width: 0.0, style: BorderStyle::None, color: style.color };
+            style.border.top = reset;
+            style.border.right = reset;
+            style.border.bottom = reset;
+            style.border.left = reset;
+            apply_border_side_shorthand(&decl.value, &mut style.border.top, style.font_size_px, style.color);
+            apply_border_side_shorthand(&decl.value, &mut style.border.right, style.font_size_px, style.color);
+            apply_border_side_shorthand(&decl.value, &mut style.border.bottom, style.font_size_px, style.color);
+            apply_border_side_shorthand(&decl.value, &mut style.border.left, style.font_size_px, style.color);
         }
 
         "width" => style.width = first_length_or_none(&decl.value, style.font_size_px),
@@ -860,6 +952,24 @@ pub fn apply_declaration(
         "bottom" => style.bottom = first_length_or_none(&decl.value, style.font_size_px),
         "left" => style.left = first_length_or_none(&decl.value, style.font_size_px),
 
+        "inset" => {
+            let vals = collect_edge_values_with_auto(&decl.value, style.font_size_px);
+            if !vals.is_empty() {
+                let (t, r, b, l) = expand_shorthand_4(&vals);
+                style.top = if t.is_infinite() { None } else { Some(t) };
+                style.right = if r.is_infinite() { None } else { Some(r) };
+                style.bottom = if b.is_infinite() { None } else { Some(b) };
+                style.left = if l.is_infinite() { None } else { Some(l) };
+            }
+        }
+
+        "block-size" => style.height = first_length_or_none(&decl.value, style.font_size_px),
+        "inline-size" => style.width = first_length_or_none(&decl.value, style.font_size_px),
+        "min-block-size" => style.min_height = first_length_or_none(&decl.value, style.font_size_px),
+        "min-inline-size" => style.min_width = first_length_or_none(&decl.value, style.font_size_px),
+        "max-block-size" => style.max_height = first_length_or_none(&decl.value, style.font_size_px),
+        "max-inline-size" => style.max_width = first_length_or_none(&decl.value, style.font_size_px),
+
         "border-top-width" => {
             if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
                 style.border.top.width = v;
@@ -903,30 +1013,30 @@ pub fn apply_declaration(
         }
 
         "border-top-color" => {
-            if let Some(c) = first_color(&decl.value) {
+            if let Some(c) = first_color_or_current(&decl.value, style.color) {
                 style.border.top.color = c;
             }
         }
         "border-right-color" => {
-            if let Some(c) = first_color(&decl.value) {
+            if let Some(c) = first_color_or_current(&decl.value, style.color) {
                 style.border.right.color = c;
             }
         }
         "border-bottom-color" => {
-            if let Some(c) = first_color(&decl.value) {
+            if let Some(c) = first_color_or_current(&decl.value, style.color) {
                 style.border.bottom.color = c;
             }
         }
         "border-left-color" => {
-            if let Some(c) = first_color(&decl.value) {
+            if let Some(c) = first_color_or_current(&decl.value, style.color) {
                 style.border.left.color = c;
             }
         }
 
-        "border-top" => apply_border_side_shorthand(&decl.value, &mut style.border.top, style.font_size_px),
-        "border-right" => apply_border_side_shorthand(&decl.value, &mut style.border.right, style.font_size_px),
-        "border-bottom" => apply_border_side_shorthand(&decl.value, &mut style.border.bottom, style.font_size_px),
-        "border-left" => apply_border_side_shorthand(&decl.value, &mut style.border.left, style.font_size_px),
+        "border-top" => apply_border_side_shorthand(&decl.value, &mut style.border.top, style.font_size_px, style.color),
+        "border-right" => apply_border_side_shorthand(&decl.value, &mut style.border.right, style.font_size_px, style.color),
+        "border-bottom" => apply_border_side_shorthand(&decl.value, &mut style.border.bottom, style.font_size_px, style.color),
+        "border-left" => apply_border_side_shorthand(&decl.value, &mut style.border.left, style.font_size_px, style.color),
 
         "align-self" => {
             if let Some(kw) = first_keyword(&decl.value) {
@@ -1062,6 +1172,156 @@ pub fn apply_declaration(
             }
         }
 
+        "place-items" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.flex.align_items = match kw {
+                    "stretch" => AlignItems::Stretch,
+                    "flex-start" | "start" => AlignItems::FlexStart,
+                    "flex-end" | "end" => AlignItems::FlexEnd,
+                    "center" => AlignItems::Center,
+                    "baseline" => AlignItems::Baseline,
+                    _ => style.flex.align_items,
+                };
+            }
+        }
+
+        "place-content" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.flex.justify_content = match kw {
+                    "flex-start" | "start" => JustifyContent::FlexStart,
+                    "flex-end" | "end" => JustifyContent::FlexEnd,
+                    "center" => JustifyContent::Center,
+                    "space-between" => JustifyContent::SpaceBetween,
+                    "space-around" => JustifyContent::SpaceAround,
+                    "space-evenly" => JustifyContent::SpaceEvenly,
+                    _ => style.flex.justify_content,
+                };
+            }
+        }
+
+        "margin-inline" => {
+            let vals = collect_edge_values_with_auto(&decl.value, style.font_size_px);
+            match vals.len() {
+                1 => { style.margin.left = vals[0]; style.margin.right = vals[0]; }
+                2 => { style.margin.left = vals[0]; style.margin.right = vals[1]; }
+                _ => {}
+            }
+        }
+        "margin-block" => {
+            let vals = collect_edge_values_with_auto(&decl.value, style.font_size_px);
+            match vals.len() {
+                1 => { style.margin.top = vals[0]; style.margin.bottom = vals[0]; }
+                2 => { style.margin.top = vals[0]; style.margin.bottom = vals[1]; }
+                _ => {}
+            }
+        }
+        "margin-inline-start" => {
+            if let Some(v) = first_length_or_auto(&decl.value, style.font_size_px) {
+                style.margin.left = v;
+            }
+        }
+        "margin-inline-end" => {
+            if let Some(v) = first_length_or_auto(&decl.value, style.font_size_px) {
+                style.margin.right = v;
+            }
+        }
+        "margin-block-start" => {
+            if let Some(v) = first_length_or_auto(&decl.value, style.font_size_px) {
+                style.margin.top = v;
+            }
+        }
+        "margin-block-end" => {
+            if let Some(v) = first_length_or_auto(&decl.value, style.font_size_px) {
+                style.margin.bottom = v;
+            }
+        }
+
+        "padding-inline" => {
+            let vals = collect_lengths(&decl.value, style.font_size_px);
+            match vals.len() {
+                1 => { style.padding.left = vals[0]; style.padding.right = vals[0]; }
+                2 => { style.padding.left = vals[0]; style.padding.right = vals[1]; }
+                _ => {}
+            }
+        }
+        "padding-block" => {
+            let vals = collect_lengths(&decl.value, style.font_size_px);
+            match vals.len() {
+                1 => { style.padding.top = vals[0]; style.padding.bottom = vals[0]; }
+                2 => { style.padding.top = vals[0]; style.padding.bottom = vals[1]; }
+                _ => {}
+            }
+        }
+        "padding-inline-start" => {
+            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+                style.padding.left = v;
+            }
+        }
+        "padding-inline-end" => {
+            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+                style.padding.right = v;
+            }
+        }
+        "padding-block-start" => {
+            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+                style.padding.top = v;
+            }
+        }
+        "padding-block-end" => {
+            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+                style.padding.bottom = v;
+            }
+        }
+
+        "border-inline-width" => {
+            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+                style.border.left.width = v;
+                style.border.right.width = v;
+            }
+        }
+        "border-block-width" => {
+            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+                style.border.top.width = v;
+                style.border.bottom.width = v;
+            }
+        }
+
+        "order" => {}
+
+        // Silently accept properties we parse but don't render yet.
+        "outline" | "outline-width" | "outline-style" | "outline-color" | "outline-offset"
+        | "transition" | "transition-property" | "transition-duration"
+        | "transition-timing-function" | "transition-delay"
+        | "animation" | "animation-name" | "animation-duration"
+        | "animation-timing-function" | "animation-delay" | "animation-iteration-count"
+        | "animation-direction" | "animation-fill-mode" | "animation-play-state"
+        | "transform" | "transform-origin" | "transform-style"
+        | "perspective" | "perspective-origin"
+        | "will-change" | "contain" | "content"
+        | "filter" | "backdrop-filter"
+        | "mix-blend-mode" | "isolation"
+        | "background-image" | "background-position" | "background-repeat"
+        | "background-size" | "background-attachment" | "background-origin"
+        | "background-clip" | "background-blend-mode"
+        | "box-shadow" | "text-shadow"
+        | "clip" | "clip-path" | "mask" | "mask-image"
+        | "pointer-events" | "touch-action" | "user-select"
+        | "resize" | "appearance"
+        | "scroll-behavior" | "scroll-snap-type" | "scroll-snap-align"
+        | "overscroll-behavior" | "overscroll-behavior-x" | "overscroll-behavior-y"
+        | "counter-reset" | "counter-increment" | "counter-set"
+        | "quotes" | "hyphens" | "tab-size" | "word-break" | "overflow-wrap"
+        | "writing-mode" | "direction" | "unicode-bidi"
+        | "accent-color" | "caret-color" | "color-scheme"
+        | "forced-color-adjust" | "print-color-adjust"
+        | "page" | "orphans" | "widows"
+        | "table-layout" | "border-collapse" | "border-spacing"
+        | "caption-side" | "empty-cells"
+        | "column-count" | "column-width" | "columns" | "column-rule"
+        | "aspect-ratio"
+        | "object-fit" | "object-position"
+        | "all" => {}
+
         _ => {
             // Unknown property — ignore.
         }
@@ -1071,6 +1331,37 @@ pub fn apply_declaration(
 // ─────────────────────────────────────────────────────────────────────────────
 // Inherit / Initial helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+fn strip_vendor_prefix(name: &str) -> String {
+    for prefix in &["-webkit-", "-moz-", "-ms-", "-o-"] {
+        if let Some(stripped) = name.strip_prefix(prefix) {
+            return stripped.to_string();
+        }
+    }
+    name.to_string()
+}
+
+fn is_inherited_property(name: &str) -> bool {
+    matches!(
+        name,
+        "color"
+            | "font-size"
+            | "font-weight"
+            | "font-family"
+            | "font-style"
+            | "line-height"
+            | "text-align"
+            | "text-transform"
+            | "text-indent"
+            | "letter-spacing"
+            | "word-spacing"
+            | "white-space"
+            | "visibility"
+            | "cursor"
+            | "list-style-type"
+            | "list-style"
+    )
+}
 
 fn apply_inherit(style: &mut ComputedStyle, prop: &str, parent: &ComputedStyle) {
     match prop {
@@ -1166,6 +1457,17 @@ fn first_color(values: &[CssValue]) -> Option<Color> {
     None
 }
 
+fn first_color_or_current(values: &[CssValue], current_color: Color) -> Option<Color> {
+    for v in values {
+        match v {
+            CssValue::Color(c) => return Some(css_color_to_color(c)),
+            CssValue::Keyword(kw) if kw == "currentcolor" => return Some(current_color),
+            _ => {}
+        }
+    }
+    None
+}
+
 fn css_color_to_color(c: &CssColor) -> Color {
     Color::rgba(c.r, c.g, c.b, c.a)
 }
@@ -1188,6 +1490,11 @@ fn resolve_length(value: f64, unit: &LengthUnit, parent_font_size: f32) -> f32 {
         LengthUnit::Rem => value as f32 * 16.0, // root font size default
         LengthUnit::Vw => value as f32 * 12.80,  // fallback ~1280px viewport
         LengthUnit::Vh => value as f32 * 8.00,    // fallback ~800px viewport
+        LengthUnit::Vmin => value as f32 * 8.00,  // min(vw, vh) fallback
+        LengthUnit::Vmax => value as f32 * 12.80, // max(vw, vh) fallback
+        LengthUnit::Pt => value as f32 * 1.333,   // 1pt = 4/3 px
+        LengthUnit::Ch => value as f32 * parent_font_size * 0.5,
+        LengthUnit::Ex => value as f32 * parent_font_size * 0.5,
         LengthUnit::Percent => value as f32, // caller must handle percentage context
     }
 }
@@ -1200,6 +1507,12 @@ fn first_length_px(values: &[CssValue], parent_font_size: f32) -> Option<f32> {
             }
             CssValue::Number(n) if *n == 0.0 => return Some(0.0),
             CssValue::Percentage(p) => return Some(*p as f32),
+            CssValue::Keyword(kw) => match kw.as_str() {
+                "thin" => return Some(1.0),
+                "medium" => return Some(3.0),
+                "thick" => return Some(5.0),
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -1209,7 +1522,7 @@ fn first_length_px(values: &[CssValue], parent_font_size: f32) -> Option<f32> {
 fn first_length_or_auto(values: &[CssValue], parent_font_size: f32) -> Option<f32> {
     for v in values {
         match v {
-            CssValue::Auto => return Some(0.0),
+            CssValue::Auto => return Some(f32::INFINITY),
             CssValue::Length(val, unit) => {
                 return Some(resolve_length(*val, unit, parent_font_size));
             }
@@ -1236,15 +1549,42 @@ fn first_length_or_none(values: &[CssValue], parent_font_size: f32) -> Option<f3
     None
 }
 
-fn first_string_or_keyword(values: &[CssValue]) -> Option<String> {
+fn collect_font_families(values: &[CssValue]) -> String {
+    let mut families: Vec<String> = Vec::new();
+    let mut current = String::new();
     for v in values {
         match v {
-            CssValue::String(s) => return Some(s.clone()),
-            CssValue::Keyword(kw) => return Some(kw.clone()),
-            _ => {}
+            CssValue::String(s) => {
+                if !current.is_empty() {
+                    families.push(current.clone());
+                    current.clear();
+                }
+                families.push(s.clone());
+            }
+            CssValue::Keyword(kw) => {
+                if current.is_empty() {
+                    current = kw.clone();
+                } else {
+                    current.push(' ');
+                    current.push_str(kw);
+                }
+            }
+            _ => {
+                if !current.is_empty() {
+                    families.push(current.clone());
+                    current.clear();
+                }
+            }
         }
     }
-    None
+    if !current.is_empty() {
+        families.push(current);
+    }
+    if families.is_empty() {
+        String::new()
+    } else {
+        families[0].clone()
+    }
 }
 
 fn collect_lengths(values: &[CssValue], parent_font_size: f32) -> Vec<f32> {
@@ -1255,6 +1595,22 @@ fn collect_lengths(values: &[CssValue], parent_font_size: f32) -> Vec<f32> {
                 result.push(resolve_length(*val, unit, parent_font_size));
             }
             CssValue::Number(n) if *n == 0.0 => result.push(0.0),
+            _ => {}
+        }
+    }
+    result
+}
+
+fn collect_edge_values_with_auto(values: &[CssValue], parent_font_size: f32) -> Vec<f32> {
+    let mut result = Vec::new();
+    for v in values {
+        match v {
+            CssValue::Auto => result.push(f32::INFINITY),
+            CssValue::Length(val, unit) => {
+                result.push(resolve_length(*val, unit, parent_font_size));
+            }
+            CssValue::Number(n) if *n == 0.0 => result.push(0.0),
+            CssValue::Percentage(p) => result.push(*p as f32),
             _ => {}
         }
     }
@@ -1327,7 +1683,7 @@ fn apply_edge_shorthand(values: &[CssValue], edges: &mut Edges<f32>, parent_font
     }
 }
 
-fn apply_border_side_shorthand(values: &[CssValue], side: &mut BorderSide, parent_font_size: f32) {
+fn apply_border_side_shorthand(values: &[CssValue], side: &mut BorderSide, parent_font_size: f32, current_color: Color) {
     for v in values {
         match v {
             CssValue::Length(val, unit) => {
@@ -1337,9 +1693,17 @@ fn apply_border_side_shorthand(values: &[CssValue], side: &mut BorderSide, paren
                 side.width = 0.0;
             }
             CssValue::Keyword(kw) => {
-                let bs = parse_border_style(kw);
-                if bs != BorderStyle::None || kw == "none" {
-                    side.style = bs;
+                match kw.as_str() {
+                    "thin" => side.width = 1.0,
+                    "medium" => side.width = 3.0,
+                    "thick" => side.width = 5.0,
+                    "currentcolor" => side.color = current_color,
+                    _ => {
+                        let bs = parse_border_style(kw);
+                        if bs != BorderStyle::None || kw == "none" {
+                            side.style = bs;
+                        }
+                    }
                 }
             }
             CssValue::Color(c) => {
@@ -1543,5 +1907,64 @@ mod tests {
             expand_shorthand_4(&[1.0, 2.0, 3.0, 4.0]),
             (1.0, 2.0, 3.0, 4.0)
         );
+    }
+
+    #[test]
+    fn margin_auto_produces_infinity_sentinel() {
+        let (dom, div, _) = build_dom_and_style("");
+        let ss = parse_stylesheet("div { margin: 0 auto; }");
+        let sheets = vec![(ss, StyleOrigin::Author)];
+        let matched = collect_matching_rules(&dom, div, &sheets);
+        let style = resolve_style(&dom, div, &matched, None, &mut default_ctx());
+        assert_eq!(style.margin.top, 0.0);
+        assert!(style.margin.right.is_infinite());
+        assert_eq!(style.margin.bottom, 0.0);
+        assert!(style.margin.left.is_infinite());
+    }
+
+    #[test]
+    fn webkit_prefix_display_flex() {
+        let (dom, div, _) = build_dom_and_style("");
+        let ss = parse_stylesheet("div { display: flex; -webkit-box-sizing: border-box; }");
+        let sheets = vec![(ss, StyleOrigin::Author)];
+        let matched = collect_matching_rules(&dom, div, &sheets);
+        let style = resolve_style(&dom, div, &matched, None, &mut default_ctx());
+        assert_eq!(style.display, Display::Flex);
+        assert_eq!(style.box_sizing, BoxSizing::BorderBox);
+    }
+
+    #[test]
+    fn percentage_width_resolved() {
+        let (dom, div, _) = build_dom_and_style("");
+        let ss = parse_stylesheet("div { width: 50%; }");
+        let sheets = vec![(ss, StyleOrigin::Author)];
+        let matched = collect_matching_rules(&dom, div, &sheets);
+        let style = resolve_style(&dom, div, &matched, None, &mut default_ctx());
+        // 50% of viewport_width (1280) = 640
+        assert_eq!(style.width, Some(640.0));
+    }
+
+    #[test]
+    fn percentage_height_resolved() {
+        let (dom, div, _) = build_dom_and_style("");
+        let ss = parse_stylesheet("div { height: 100%; }");
+        let sheets = vec![(ss, StyleOrigin::Author)];
+        let matched = collect_matching_rules(&dom, div, &sheets);
+        let style = resolve_style(&dom, div, &matched, None, &mut default_ctx());
+        // 100% of viewport_height (800) = 800
+        assert_eq!(style.height, Some(800.0));
+    }
+
+    #[test]
+    fn font_size_percentage() {
+        let (dom, _, p) = build_dom_and_style("");
+        let ss = parse_stylesheet("p { font-size: 200%; }");
+        let sheets = vec![(ss, StyleOrigin::Author)];
+        // Parent has default 16px font-size
+        let parent_style = ComputedStyle::default();
+        let matched = collect_matching_rules(&dom, p, &sheets);
+        let style = resolve_style(&dom, p, &matched, Some(&parent_style), &mut default_ctx());
+        // 200% of inherited 16px = 32px
+        assert_eq!(style.font_size_px, 32.0);
     }
 }

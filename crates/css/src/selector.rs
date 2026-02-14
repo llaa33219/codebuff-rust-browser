@@ -47,6 +47,18 @@ pub enum PseudoClass {
     Link,
     Visited,
     Root,
+    FirstOfType,
+    LastOfType,
+    OnlyChild,
+    OnlyOfType,
+    Empty,
+    Enabled,
+    Disabled,
+    Checked,
+    AnyLink,
+    FocusVisible,
+    FocusWithin,
+    Placeholder,
 }
 
 /// Pseudo-element selectors.
@@ -396,8 +408,20 @@ fn parse_compound_selector(tokens: &[CssToken], start: usize) -> (CompoundSelect
                                 "hover" => Some(PseudoClass::Hover),
                                 "active" => Some(PseudoClass::Active),
                                 "focus" => Some(PseudoClass::Focus),
+                                "focus-visible" => Some(PseudoClass::FocusVisible),
+                                "focus-within" => Some(PseudoClass::FocusWithin),
                                 "first-child" => Some(PseudoClass::FirstChild),
                                 "last-child" => Some(PseudoClass::LastChild),
+                                "first-of-type" => Some(PseudoClass::FirstOfType),
+                                "last-of-type" => Some(PseudoClass::LastOfType),
+                                "only-child" => Some(PseudoClass::OnlyChild),
+                                "only-of-type" => Some(PseudoClass::OnlyOfType),
+                                "empty" => Some(PseudoClass::Empty),
+                                "enabled" => Some(PseudoClass::Enabled),
+                                "disabled" => Some(PseudoClass::Disabled),
+                                "checked" => Some(PseudoClass::Checked),
+                                "any-link" => Some(PseudoClass::AnyLink),
+                                "placeholder-shown" => Some(PseudoClass::Placeholder),
                                 "link" => Some(PseudoClass::Link),
                                 "visited" => Some(PseudoClass::Visited),
                                 "root" => Some(PseudoClass::Root),
@@ -424,6 +448,13 @@ fn parse_compound_selector(tokens: &[CssToken], start: usize) -> (CompoundSelect
                                         Box::new(inner),
                                     )));
                                     pos = new_pos;
+                                }
+                                "is" | "where" | "matches" | "any"
+                                | "-webkit-any" | "-moz-any" | "has" => {
+                                    // Treat as always-matching: skip arguments but
+                                    // add Universal so the rule still applies.
+                                    pos = skip_to_matching_rparen(tokens, pos + 1);
+                                    simples.push(SimpleSelector::Universal);
                                 }
                                 _ => {
                                     // Skip unknown function and its arguments
