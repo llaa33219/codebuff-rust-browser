@@ -541,6 +541,267 @@ impl Default for BorderSide {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// WordBreak
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WordBreak {
+    Normal,
+    BreakAll,
+    KeepAll,
+    BreakWord,
+}
+
+impl Default for WordBreak {
+    fn default() -> Self {
+        WordBreak::Normal
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OverflowWrap
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverflowWrap {
+    Normal,
+    BreakWord,
+    Anywhere,
+}
+
+impl Default for OverflowWrap {
+    fn default() -> Self {
+        OverflowWrap::Normal
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Direction
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Ltr,
+    Rtl,
+}
+
+impl Default for Direction {
+    fn default() -> Self {
+        Direction::Ltr
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PointerEvents
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PointerEvents {
+    Auto,
+    None,
+}
+
+impl Default for PointerEvents {
+    fn default() -> Self {
+        PointerEvents::Auto
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UserSelect
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UserSelect {
+    Auto,
+    None,
+    Text,
+    All,
+}
+
+impl Default for UserSelect {
+    fn default() -> Self {
+        UserSelect::Auto
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ObjectFit
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjectFit {
+    Fill,
+    Contain,
+    Cover,
+    None,
+    ScaleDown,
+}
+
+impl Default for ObjectFit {
+    fn default() -> Self {
+        ObjectFit::Fill
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Resize
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resize {
+    None,
+    Both,
+    Horizontal,
+    Vertical,
+}
+
+impl Default for Resize {
+    fn default() -> Self {
+        Resize::None
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BorderCollapse
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BorderCollapse {
+    Separate,
+    Collapse,
+}
+
+impl Default for BorderCollapse {
+    fn default() -> Self {
+        BorderCollapse::Separate
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TableLayout
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableLayout {
+    Auto,
+    Fixed,
+}
+
+impl Default for TableLayout {
+    fn default() -> Self {
+        TableLayout::Auto
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BackgroundRepeat
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackgroundRepeat {
+    Repeat,
+    NoRepeat,
+    RepeatX,
+    RepeatY,
+    Space,
+    Round,
+}
+
+impl Default for BackgroundRepeat {
+    fn default() -> Self {
+        BackgroundRepeat::Repeat
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BackgroundSize
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BackgroundSize {
+    Auto,
+    Cover,
+    Contain,
+    Explicit(f32, f32),
+}
+
+impl Default for BackgroundSize {
+    fn default() -> Self {
+        BackgroundSize::Auto
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WritingMode
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WritingMode {
+    HorizontalTb,
+    VerticalRl,
+    VerticalLr,
+}
+
+impl Default for WritingMode {
+    fn default() -> Self {
+        WritingMode::HorizontalTb
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UnicodeBidi
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnicodeBidi {
+    Normal,
+    Embed,
+    Isolate,
+    BidiOverride,
+    IsolateOverride,
+    Plaintext,
+}
+
+impl Default for UnicodeBidi {
+    fn default() -> Self {
+        UnicodeBidi::Normal
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CaptionSide
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptionSide {
+    Top,
+    Bottom,
+}
+
+impl Default for CaptionSide {
+    fn default() -> Self {
+        CaptionSide::Top
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EmptyCells
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmptyCells {
+    Show,
+    Hide,
+}
+
+impl Default for EmptyCells {
+    fn default() -> Self {
+        EmptyCells::Show
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // BackgroundImage
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -690,6 +951,52 @@ pub struct ComputedStyle {
 
     // -- Text shadow --
     pub text_shadow: Vec<TextShadow>,
+
+    // -- Text breaking --
+    pub word_break: WordBreak,
+    pub overflow_wrap: OverflowWrap,
+    pub tab_size: f32,
+    pub hyphens: bool,
+
+    // -- Directionality --
+    pub direction: Direction,
+    pub writing_mode: WritingMode,
+    pub unicode_bidi: UnicodeBidi,
+
+    // -- Interaction --
+    pub pointer_events: PointerEvents,
+    pub user_select: UserSelect,
+    pub resize: Resize,
+
+    // -- Object/image --
+    pub object_fit: ObjectFit,
+    pub object_position_x: f32,
+    pub object_position_y: f32,
+
+    // -- Table --
+    pub border_collapse: BorderCollapse,
+    pub border_spacing: f32,
+    pub table_layout: TableLayout,
+    pub caption_side: CaptionSide,
+    pub empty_cells: EmptyCells,
+
+    // -- Background extended --
+    pub background_repeat: BackgroundRepeat,
+    pub background_size: BackgroundSize,
+    pub background_position_x: f32,
+    pub background_position_y: f32,
+
+    // -- Outline --
+    pub outline_width: f32,
+    pub outline_style: BorderStyle,
+    pub outline_color: Color,
+    pub outline_offset: f32,
+
+    // -- Sizing --
+    pub aspect_ratio: Option<f32>,
+
+    // -- Content --
+    pub content: Option<String>,
 }
 
 impl Default for ComputedStyle {
@@ -775,6 +1082,43 @@ impl Default for ComputedStyle {
             background_image: BackgroundImage::None,
 
             text_shadow: Vec::new(),
+
+            word_break: WordBreak::Normal,
+            overflow_wrap: OverflowWrap::Normal,
+            tab_size: 8.0,
+            hyphens: false,
+
+            direction: Direction::Ltr,
+            writing_mode: WritingMode::HorizontalTb,
+            unicode_bidi: UnicodeBidi::Normal,
+
+            pointer_events: PointerEvents::Auto,
+            user_select: UserSelect::Auto,
+            resize: Resize::None,
+
+            object_fit: ObjectFit::Fill,
+            object_position_x: 50.0,
+            object_position_y: 50.0,
+
+            border_collapse: BorderCollapse::Separate,
+            border_spacing: 0.0,
+            table_layout: TableLayout::Auto,
+            caption_side: CaptionSide::Top,
+            empty_cells: EmptyCells::Show,
+
+            background_repeat: BackgroundRepeat::Repeat,
+            background_size: BackgroundSize::Auto,
+            background_position_x: 0.0,
+            background_position_y: 0.0,
+
+            outline_width: 0.0,
+            outline_style: BorderStyle::None,
+            outline_color: Color::BLACK,
+            outline_offset: 0.0,
+
+            aspect_ratio: None,
+
+            content: None,
         }
     }
 }

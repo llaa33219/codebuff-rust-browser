@@ -428,6 +428,17 @@ fn inherit_from_parent(parent: &ComputedStyle) -> ComputedStyle {
     s.visibility = parent.visibility;
     s.cursor = parent.cursor;
     s.list_style_type = parent.list_style_type;
+    s.word_break = parent.word_break;
+    s.overflow_wrap = parent.overflow_wrap;
+    s.tab_size = parent.tab_size;
+    s.direction = parent.direction;
+    s.writing_mode = parent.writing_mode;
+    s.pointer_events = parent.pointer_events;
+    s.user_select = parent.user_select;
+    s.border_collapse = parent.border_collapse;
+    s.border_spacing = parent.border_spacing;
+    s.empty_cells = parent.empty_cells;
+    s.caption_side = parent.caption_side;
 
     s
 }
@@ -1587,37 +1598,369 @@ pub fn apply_declaration(
             }
         }
 
-        // Silently accept properties we parse but don't render yet.
-        "outline" | "outline-width" | "outline-style" | "outline-color" | "outline-offset"
-        | "transition" | "transition-property" | "transition-duration"
+        // -- Outline properties --
+        "outline" => {
+            style.outline_width = 0.0;
+            style.outline_style = BorderStyle::None;
+            style.outline_color = style.color;
+            for v in &decl.value {
+                match v {
+                    CssValue::Length(val, unit) => style.outline_width = resolve_length(*val, unit, style.font_size_px),
+                    CssValue::Number(n) if *n == 0.0 => style.outline_width = 0.0,
+                    CssValue::Color(c) => style.outline_color = css_color_to_color(c),
+                    CssValue::Keyword(kw) => {
+                        let bs = parse_border_style(kw);
+                        if bs != BorderStyle::None || kw == "none" {
+                            style.outline_style = bs;
+                        } else if kw == "currentcolor" {
+                            style.outline_color = style.color;
+                        } else {
+                            match kw.as_str() {
+                                "thin" => style.outline_width = 1.0,
+                                "medium" => style.outline_width = 3.0,
+                                "thick" => style.outline_width = 5.0,
+                                _ => {}
+                            }
+                        }
+                    }
+                    CssValue::None => {
+                        style.outline_style = BorderStyle::None;
+                        style.outline_width = 0.0;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        "outline-width" => {
+            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+                style.outline_width = v;
+            }
+        }
+        "outline-style" => {
+            if let Some(kw) = first_keyword_or_none(&decl.value) {
+                style.outline_style = parse_border_style(kw);
+            }
+        }
+        "outline-color" => {
+            if let Some(c) = first_color_or_current(&decl.value, style.color) {
+                style.outline_color = c;
+            }
+        }
+        "outline-offset" => {
+            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+                style.outline_offset = v;
+            }
+        }
+
+        // -- Background extended properties --
+        "background-repeat" => {
+            if let Some(kw) = first_keyword_or_none(&decl.value) {
+                style.background_repeat = match kw {
+                    "repeat" => BackgroundRepeat::Repeat,
+                    "no-repeat" => BackgroundRepeat::NoRepeat,
+                    "repeat-x" => BackgroundRepeat::RepeatX,
+                    "repeat-y" => BackgroundRepeat::RepeatY,
+                    "space" => BackgroundRepeat::Space,
+                    "round" => BackgroundRepeat::Round,
+                    _ => style.background_repeat,
+                };
+            }
+        }
+        "background-size" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.background_size = match kw {
+                    "auto" => BackgroundSize::Auto,
+                    "cover" => BackgroundSize::Cover,
+                    "contain" => BackgroundSize::Contain,
+                    _ => style.background_size,
+                };
+            } else {
+                let vals = collect_lengths(&decl.value, style.font_size_px);
+                if vals.len() == 2 {
+                    style.background_size = BackgroundSize::Explicit(vals[0], vals[1]);
+                } else if vals.len() == 1 {
+                    style.background_size = BackgroundSize::Explicit(vals[0], vals[0]);
+                }
+            }
+        }
+        "background-position" => {
+            let mut x_set = false;
+            for v in &decl.value {
+                match v {
+                    CssValue::Length(val, unit) => {
+                        let px = resolve_length(*val, unit, style.font_size_px);
+                        if !x_set { style.background_position_x = px; x_set = true; }
+                        else { style.background_position_y = px; }
+                    }
+                    CssValue::Percentage(p) => {
+                        if !x_set { style.background_position_x = *p as f32; x_set = true; }
+                        else { style.background_position_y = *p as f32; }
+                    }
+                    CssValue::Number(n) if *n == 0.0 => {
+                        if !x_set { style.background_position_x = 0.0; x_set = true; }
+                        else { style.background_position_y = 0.0; }
+                    }
+                    CssValue::Keyword(kw) => match kw.as_str() {
+                        "left" => { style.background_position_x = 0.0; x_set = true; }
+                        "right" => { style.background_position_x = 100.0; x_set = true; }
+                        "center" => {
+                            if !x_set { style.background_position_x = 50.0; x_set = true; }
+                            else { style.background_position_y = 50.0; }
+                        }
+                        "top" => { style.background_position_y = 0.0; }
+                        "bottom" => { style.background_position_y = 100.0; }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+        }
+        "background-attachment" | "background-origin" | "background-clip" | "background-blend-mode" => {}
+
+        // -- Text breaking properties --
+        "word-break" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.word_break = match kw {
+                    "normal" => WordBreak::Normal,
+                    "break-all" => WordBreak::BreakAll,
+                    "keep-all" => WordBreak::KeepAll,
+                    "break-word" => WordBreak::BreakWord,
+                    _ => style.word_break,
+                };
+            }
+        }
+        "overflow-wrap" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.overflow_wrap = match kw {
+                    "normal" => OverflowWrap::Normal,
+                    "break-word" => OverflowWrap::BreakWord,
+                    "anywhere" => OverflowWrap::Anywhere,
+                    _ => style.overflow_wrap,
+                };
+            }
+        }
+        "tab-size" => {
+            if let Some(n) = first_number(&decl.value) {
+                style.tab_size = n;
+            } else if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+                style.tab_size = v;
+            }
+        }
+        "hyphens" => {
+            if let Some(kw) = first_keyword_or_none(&decl.value) {
+                style.hyphens = kw == "auto";
+            }
+        }
+        "quotes" => {}
+
+        // -- Directionality --
+        "direction" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.direction = match kw {
+                    "ltr" => Direction::Ltr,
+                    "rtl" => Direction::Rtl,
+                    _ => style.direction,
+                };
+            }
+        }
+        "writing-mode" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.writing_mode = match kw {
+                    "horizontal-tb" => WritingMode::HorizontalTb,
+                    "vertical-rl" => WritingMode::VerticalRl,
+                    "vertical-lr" => WritingMode::VerticalLr,
+                    _ => style.writing_mode,
+                };
+            }
+        }
+        "unicode-bidi" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.unicode_bidi = match kw {
+                    "normal" => UnicodeBidi::Normal,
+                    "embed" => UnicodeBidi::Embed,
+                    "isolate" => UnicodeBidi::Isolate,
+                    "bidi-override" => UnicodeBidi::BidiOverride,
+                    "isolate-override" => UnicodeBidi::IsolateOverride,
+                    "plaintext" => UnicodeBidi::Plaintext,
+                    _ => style.unicode_bidi,
+                };
+            }
+        }
+
+        // -- Interaction --
+        "pointer-events" => {
+            if let Some(kw) = first_keyword_or_none(&decl.value) {
+                style.pointer_events = match kw {
+                    "auto" | "all" | "visible" | "painted" | "visiblePainted"
+                    | "visibleFill" | "visibleStroke" => PointerEvents::Auto,
+                    "none" => PointerEvents::None,
+                    _ => style.pointer_events,
+                };
+            }
+        }
+        "user-select" => {
+            if let Some(kw) = first_keyword_or_none(&decl.value) {
+                style.user_select = match kw {
+                    "auto" => UserSelect::Auto,
+                    "none" => UserSelect::None,
+                    "text" => UserSelect::Text,
+                    "all" => UserSelect::All,
+                    _ => style.user_select,
+                };
+            }
+        }
+        "touch-action" => {}
+        "resize" => {
+            if let Some(kw) = first_keyword_or_none(&decl.value) {
+                style.resize = match kw {
+                    "none" => Resize::None,
+                    "both" => Resize::Both,
+                    "horizontal" => Resize::Horizontal,
+                    "vertical" => Resize::Vertical,
+                    _ => style.resize,
+                };
+            }
+        }
+        "appearance" => {}
+
+        // -- Object/image --
+        "object-fit" => {
+            if let Some(kw) = first_keyword_or_none(&decl.value) {
+                style.object_fit = match kw {
+                    "fill" => ObjectFit::Fill,
+                    "contain" => ObjectFit::Contain,
+                    "cover" => ObjectFit::Cover,
+                    "none" => ObjectFit::None,
+                    "scale-down" => ObjectFit::ScaleDown,
+                    _ => style.object_fit,
+                };
+            }
+        }
+        "object-position" => {
+            let mut x_set = false;
+            for v in &decl.value {
+                match v {
+                    CssValue::Length(val, unit) => {
+                        let px = resolve_length(*val, unit, style.font_size_px);
+                        if !x_set { style.object_position_x = px; x_set = true; }
+                        else { style.object_position_y = px; }
+                    }
+                    CssValue::Percentage(p) => {
+                        if !x_set { style.object_position_x = *p as f32; x_set = true; }
+                        else { style.object_position_y = *p as f32; }
+                    }
+                    CssValue::Number(n) if *n == 0.0 => {
+                        if !x_set { style.object_position_x = 0.0; x_set = true; }
+                        else { style.object_position_y = 0.0; }
+                    }
+                    CssValue::Keyword(kw) => match kw.as_str() {
+                        "left" => { style.object_position_x = 0.0; x_set = true; }
+                        "right" => { style.object_position_x = 100.0; x_set = true; }
+                        "center" => {
+                            if !x_set { style.object_position_x = 50.0; x_set = true; }
+                            else { style.object_position_y = 50.0; }
+                        }
+                        "top" => { style.object_position_y = 0.0; }
+                        "bottom" => { style.object_position_y = 100.0; }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+        }
+
+        // -- Table --
+        "table-layout" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.table_layout = match kw {
+                    "auto" => TableLayout::Auto,
+                    "fixed" => TableLayout::Fixed,
+                    _ => style.table_layout,
+                };
+            }
+        }
+        "border-collapse" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.border_collapse = match kw {
+                    "separate" => BorderCollapse::Separate,
+                    "collapse" => BorderCollapse::Collapse,
+                    _ => style.border_collapse,
+                };
+            }
+        }
+        "border-spacing" => {
+            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+                style.border_spacing = v;
+            }
+        }
+        "caption-side" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.caption_side = match kw {
+                    "top" => CaptionSide::Top,
+                    "bottom" => CaptionSide::Bottom,
+                    _ => style.caption_side,
+                };
+            }
+        }
+        "empty-cells" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.empty_cells = match kw {
+                    "show" => EmptyCells::Show,
+                    "hide" => EmptyCells::Hide,
+                    _ => style.empty_cells,
+                };
+            }
+        }
+
+        // -- Sizing --
+        "aspect-ratio" => {
+            if matches!(decl.value.first(), Some(CssValue::Auto)) {
+                style.aspect_ratio = None;
+            } else {
+                let mut nums = Vec::new();
+                for v in &decl.value {
+                    if let CssValue::Number(n) = v {
+                        nums.push(*n as f32);
+                    }
+                }
+                if nums.len() == 2 && nums[1] != 0.0 {
+                    style.aspect_ratio = Some(nums[0] / nums[1]);
+                } else if nums.len() == 1 {
+                    style.aspect_ratio = Some(nums[0]);
+                }
+            }
+        }
+
+        // -- Content --
+        "content" => {
+            if matches!(decl.value.first(), Some(CssValue::None))
+                || matches!(decl.value.first(), Some(CssValue::Keyword(k)) if k == "none" || k == "normal")
+            {
+                style.content = None;
+            } else if let Some(CssValue::String(s)) = decl.value.first() {
+                style.content = Some(s.clone());
+            }
+        }
+
+        // Silently accept properties we don't render yet.
+        "transition" | "transition-property" | "transition-duration"
         | "transition-timing-function" | "transition-delay"
         | "animation" | "animation-name" | "animation-duration"
         | "animation-timing-function" | "animation-delay" | "animation-iteration-count"
         | "animation-direction" | "animation-fill-mode" | "animation-play-state"
         | "transform" | "transform-origin" | "transform-style"
         | "perspective" | "perspective-origin"
-        | "will-change" | "contain" | "content"
+        | "will-change" | "contain"
         | "filter" | "backdrop-filter"
         | "mix-blend-mode" | "isolation"
-        | "background-position" | "background-repeat"
-        | "background-size" | "background-attachment" | "background-origin"
-        | "background-clip" | "background-blend-mode"
         | "clip" | "clip-path" | "mask" | "mask-image"
-        | "pointer-events" | "touch-action" | "user-select"
-        | "resize" | "appearance"
         | "scroll-behavior" | "scroll-snap-type" | "scroll-snap-align"
         | "overscroll-behavior" | "overscroll-behavior-x" | "overscroll-behavior-y"
         | "counter-reset" | "counter-increment" | "counter-set"
-        | "quotes" | "hyphens" | "tab-size" | "word-break" | "overflow-wrap"
-        | "writing-mode" | "direction" | "unicode-bidi"
         | "accent-color" | "caret-color" | "color-scheme"
         | "forced-color-adjust" | "print-color-adjust"
         | "page" | "orphans" | "widows"
-        | "table-layout" | "border-collapse" | "border-spacing"
-        | "caption-side" | "empty-cells"
         | "column-count" | "column-width" | "columns" | "column-rule"
-        | "aspect-ratio"
-        | "object-fit" | "object-position"
         | "all" => {}
 
         _ => {
@@ -1658,6 +2001,17 @@ fn is_inherited_property(name: &str) -> bool {
             | "cursor"
             | "list-style-type"
             | "list-style"
+            | "word-break"
+            | "overflow-wrap"
+            | "tab-size"
+            | "direction"
+            | "writing-mode"
+            | "pointer-events"
+            | "user-select"
+            | "border-collapse"
+            | "border-spacing"
+            | "empty-cells"
+            | "caption-side"
     )
 }
 
@@ -1680,6 +2034,17 @@ fn apply_inherit(style: &mut ComputedStyle, prop: &str, parent: &ComputedStyle) 
         "list-style-type" | "list-style" => style.list_style_type = parent.list_style_type,
         "display" => style.display = parent.display,
         "opacity" => style.opacity = parent.opacity,
+        "word-break" => style.word_break = parent.word_break,
+        "overflow-wrap" => style.overflow_wrap = parent.overflow_wrap,
+        "tab-size" => style.tab_size = parent.tab_size,
+        "direction" => style.direction = parent.direction,
+        "writing-mode" => style.writing_mode = parent.writing_mode,
+        "pointer-events" => style.pointer_events = parent.pointer_events,
+        "user-select" => style.user_select = parent.user_select,
+        "border-collapse" => style.border_collapse = parent.border_collapse,
+        "border-spacing" => style.border_spacing = parent.border_spacing,
+        "empty-cells" => style.empty_cells = parent.empty_cells,
+        "caption-side" => style.caption_side = parent.caption_side,
         _ => {}
     }
 }
@@ -1718,6 +2083,33 @@ fn apply_initial(style: &mut ComputedStyle, prop: &str) {
         "z-index" => style.z_index = def.z_index,
         "cursor" => style.cursor = def.cursor,
         "list-style-type" | "list-style" => style.list_style_type = def.list_style_type,
+        "word-break" => style.word_break = def.word_break,
+        "overflow-wrap" => style.overflow_wrap = def.overflow_wrap,
+        "tab-size" => style.tab_size = def.tab_size,
+        "hyphens" => style.hyphens = def.hyphens,
+        "direction" => style.direction = def.direction,
+        "writing-mode" => style.writing_mode = def.writing_mode,
+        "unicode-bidi" => style.unicode_bidi = def.unicode_bidi,
+        "pointer-events" => style.pointer_events = def.pointer_events,
+        "user-select" => style.user_select = def.user_select,
+        "resize" => style.resize = def.resize,
+        "object-fit" => style.object_fit = def.object_fit,
+        "object-position" => { style.object_position_x = def.object_position_x; style.object_position_y = def.object_position_y; }
+        "table-layout" => style.table_layout = def.table_layout,
+        "border-collapse" => style.border_collapse = def.border_collapse,
+        "border-spacing" => style.border_spacing = def.border_spacing,
+        "caption-side" => style.caption_side = def.caption_side,
+        "empty-cells" => style.empty_cells = def.empty_cells,
+        "background-repeat" => style.background_repeat = def.background_repeat,
+        "background-size" => style.background_size = def.background_size,
+        "background-position" => { style.background_position_x = def.background_position_x; style.background_position_y = def.background_position_y; }
+        "outline" => { style.outline_width = def.outline_width; style.outline_style = def.outline_style; style.outline_color = def.outline_color; style.outline_offset = def.outline_offset; }
+        "outline-width" => style.outline_width = def.outline_width,
+        "outline-style" => style.outline_style = def.outline_style,
+        "outline-color" => style.outline_color = def.outline_color,
+        "outline-offset" => style.outline_offset = def.outline_offset,
+        "aspect-ratio" => style.aspect_ratio = def.aspect_ratio,
+        "content" => style.content = def.content.clone(),
         _ => {}
     }
 }

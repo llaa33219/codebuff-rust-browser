@@ -164,6 +164,9 @@ fn paint_layout_box(tree: &LayoutTree, box_id: LayoutBoxId, list: &mut DisplayLi
 
         // 3. Paint borders.
         paint_borders(layout_box, list);
+
+        // 4. Paint outline (outside the border box).
+        paint_outline(layout_box, list);
     }
 
     // 4. Paint content.
@@ -422,6 +425,29 @@ fn paint_text(layout_box: &LayoutBox, list: &mut DisplayList) {
         }
         style::TextDecoration::None => {}
     }
+}
+
+/// Paint the outline of a box (rendered outside the border box).
+fn paint_outline(layout_box: &LayoutBox, list: &mut DisplayList) {
+    let style = &layout_box.computed_style;
+    if style.outline_width <= 0.0 || style.outline_style == BorderStyle::None {
+        return;
+    }
+    let border_box = layout_box.box_model.border_box;
+    let offset = style.outline_offset;
+    let w = style.outline_width;
+    let outline_rect = Rect::new(
+        border_box.x - w - offset,
+        border_box.y - w - offset,
+        border_box.w + (w + offset) * 2.0,
+        border_box.h + (w + offset) * 2.0,
+    );
+    list.push(DisplayItem::Border {
+        rect: outline_rect,
+        widths: [w, w, w, w],
+        colors: [style.outline_color; 4],
+        styles: [style.outline_style; 4],
+    });
 }
 
 /// Paint children of a layout box in stacking order.
