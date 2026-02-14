@@ -66,6 +66,22 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
         )
     };
 
+    // Read multi-column and table properties.
+    let (column_count, column_gap, border_spacing_val) = tree.get(box_id)
+        .map(|b| {
+            let spacing = if b.computed_style.border_collapse == style::BorderCollapse::Collapse {
+                0.0
+            } else {
+                b.computed_style.border_spacing
+            };
+            (
+                b.computed_style.column_count.unwrap_or(0),
+                b.computed_style.column_gap_val.unwrap_or(0.0),
+                spacing,
+            )
+        })
+        .unwrap_or((0, 0.0, 0.0));
+
     // Sanitize margins: replace auto sentinels (INFINITY) with 0 for width calculation.
     let safe_margin = Edges {
         top: if margin.top.is_infinite() { 0.0 } else { margin.top },
@@ -136,7 +152,11 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
         content_height = specified_height.unwrap_or(0.0);
     } else if has_block_children && !has_inline_children {
         // Pure block formatting context.
-        content_height = layout_block_children(tree, &flow_children, content_width);
+        if column_count > 1 {
+            content_height = layout_multi_column(tree, &flow_children, content_width, column_count, column_gap);
+        } else {
+            content_height = layout_block_children(tree, &flow_children, content_width, border_spacing_val);
+        }
     } else if !has_block_children && has_inline_children {
         // Pure inline formatting context.
         content_height = layout_inline_children(tree, &flow_children, content_width);
@@ -259,6 +279,7 @@ fn layout_block_children(
     tree: &mut LayoutTree,
     children: &[LayoutBoxId],
     containing_width: f32,
+    border_spacing: f32,
 ) -> f32 {
     let mut cursor_y = 0.0f32;
     let mut prev_margin_bottom = 0.0f32;
@@ -295,6 +316,11 @@ fn layout_block_children(
 
         cursor_y += h;
 
+        // Apply border-spacing between children (e.g. table cells).
+        if border_spacing > 0.0 && i < children.len() - 1 {
+            cursor_y += border_spacing;
+        }
+
         prev_margin_bottom = tree
             .get(child_id)
             .map(|b| {
@@ -305,6 +331,65 @@ fn layout_block_children(
     }
 
     cursor_y
+}
+
+/// Layout block children in multiple columns.
+fn layout_multi_column(
+    tree: &mut LayoutTree,
+    children: &[LayoutBoxId],
+    containing_width: f32,
+    column_count: u32,
+    column_gap: f32,
+) -> f32 {
+    let col_count = (column_count as f32).max(1.0);
+    let total_gap = (col_count - 1.0) * column_gap;
+    let col_width = ((containing_width - total_gap) / col_count).max(0.0);
+
+    // First pass: lay out all children at column width.
+    let single_col_height = layout_block_children(tree, children, col_width, 0.0);
+
+    if column_count <= 1 || children.is_empty() {
+        return single_col_height;
+    }
+
+    // Target height per column.
+    let target_height = single_col_height / col_count;
+
+    // Second pass: redistribute children into columns.
+    let mut col = 0u32;
+    let mut col_y = 0.0f32;
+    let mut max_height = 0.0f32;
+
+    for &child_id in children {
+        let child_h = tree.get(child_id)
+            .map(|b| b.box_model.border_box.h)
+            .unwrap_or(0.0);
+
+        // Move to next column if this child would exceed target and we have room.
+        if col_y > 0.0 && col_y + child_h > target_height && col + 1 < column_count {
+            max_height = max_height.max(col_y);
+            col += 1;
+            col_y = 0.0;
+        }
+
+        let col_x = col as f32 * (col_width + column_gap);
+        if let Some(child_box) = tree.get_mut(child_id) {
+            let dx = col_x - child_box.box_model.border_box.x;
+            let dy = col_y - child_box.box_model.border_box.y;
+            child_box.box_model.content_box.x += dx;
+            child_box.box_model.content_box.y += dy;
+            child_box.box_model.padding_box.x += dx;
+            child_box.box_model.padding_box.y += dy;
+            child_box.box_model.border_box.x += dx;
+            child_box.box_model.border_box.y += dy;
+            child_box.box_model.margin_box.x += dx;
+            child_box.box_model.margin_box.y += dy;
+        }
+
+        col_y += child_h;
+    }
+    max_height = max_height.max(col_y);
+    max_height
 }
 
 /// Layout inline children by collecting them into line boxes.
@@ -448,6 +533,20 @@ fn compute_translate(transforms: &[style::TransformFunction]) -> (f32, f32) {
     (tx, ty)
 }
 
+fn compute_scale(transforms: &[style::TransformFunction]) -> (f32, f32) {
+    let mut sx = 1.0f32;
+    let mut sy = 1.0f32;
+    for t in transforms {
+        match t {
+            style::TransformFunction::Scale(x, y) => { sx *= x; sy *= y; }
+            style::TransformFunction::ScaleX(x) => sx *= x,
+            style::TransformFunction::ScaleY(y) => sy *= y,
+            _ => {}
+        }
+    }
+    (sx, sy)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Absolute positioning
 // ─────────────────────────────────────────────────────────────────────────────
@@ -480,8 +579,18 @@ pub fn resolve_absolute_positions(
         };
         // Apply transform: translate offsets.
         let (tx, ty) = compute_translate(&b.computed_style.transform);
-        let offset_x = parent_x + rel_dx + tx;
-        let offset_y = parent_y + rel_dy + ty;
+        // Apply scale transform origin offset (visual positioning adjustment).
+        let (sx, sy) = compute_scale(&b.computed_style.transform);
+        let scale_dx = if (sx - 1.0).abs() > 0.001 {
+            let origin_x = b.computed_style.transform_origin_x / 100.0 * b.box_model.border_box.w;
+            origin_x * (1.0 - sx)
+        } else { 0.0 };
+        let scale_dy = if (sy - 1.0).abs() > 0.001 {
+            let origin_y = b.computed_style.transform_origin_y / 100.0 * b.box_model.border_box.h;
+            origin_y * (1.0 - sy)
+        } else { 0.0 };
+        let offset_x = parent_x + rel_dx + tx + scale_dx;
+        let offset_y = parent_y + rel_dy + ty + scale_dy;
 
         b.box_model.content_box.x += offset_x;
         b.box_model.content_box.y += offset_y;

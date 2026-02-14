@@ -239,6 +239,118 @@ fn paint_box_shadow(layout_box: &LayoutBox, list: &mut DisplayList) {
     }
 }
 
+/// Apply CSS filter functions (grayscale, brightness, contrast, etc.) to a color.
+fn apply_color_filters(color: Color, filters: &[style::FilterFunction]) -> Color {
+    let mut r = color.r as f32;
+    let mut g = color.g as f32;
+    let mut b = color.b as f32;
+    for f in filters {
+        match f {
+            style::FilterFunction::Grayscale(amt) => {
+                let gray = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                r += (gray - r) * amt;
+                g += (gray - g) * amt;
+                b += (gray - b) * amt;
+            }
+            style::FilterFunction::Brightness(amt) => {
+                r *= amt;
+                g *= amt;
+                b *= amt;
+            }
+            style::FilterFunction::Contrast(amt) => {
+                r = (r - 128.0) * amt + 128.0;
+                g = (g - 128.0) * amt + 128.0;
+                b = (b - 128.0) * amt + 128.0;
+            }
+            style::FilterFunction::Invert(amt) => {
+                r += (255.0 - 2.0 * r) * amt;
+                g += (255.0 - 2.0 * g) * amt;
+                b += (255.0 - 2.0 * b) * amt;
+            }
+            style::FilterFunction::Sepia(amt) => {
+                let sr = (0.393 * r + 0.769 * g + 0.189 * b).min(255.0);
+                let sg = (0.349 * r + 0.686 * g + 0.168 * b).min(255.0);
+                let sb = (0.272 * r + 0.534 * g + 0.131 * b).min(255.0);
+                r += (sr - r) * amt;
+                g += (sg - g) * amt;
+                b += (sb - b) * amt;
+            }
+            style::FilterFunction::Saturate(amt) => {
+                let gray = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                r = gray + (r - gray) * amt;
+                g = gray + (g - gray) * amt;
+                b = gray + (b - gray) * amt;
+            }
+            style::FilterFunction::HueRotate(deg) => {
+                let rad = deg * std::f32::consts::PI / 180.0;
+                let cos_a = rad.cos();
+                let sin_a = rad.sin();
+                let nr = r * (0.213 + 0.787 * cos_a - 0.213 * sin_a)
+                    + g * (0.715 - 0.715 * cos_a - 0.715 * sin_a)
+                    + b * (0.072 - 0.072 * cos_a + 0.928 * sin_a);
+                let ng = r * (0.213 - 0.213 * cos_a + 0.143 * sin_a)
+                    + g * (0.715 + 0.285 * cos_a + 0.140 * sin_a)
+                    + b * (0.072 - 0.072 * cos_a - 0.283 * sin_a);
+                let nb = r * (0.213 - 0.213 * cos_a - 0.787 * sin_a)
+                    + g * (0.715 - 0.715 * cos_a + 0.715 * sin_a)
+                    + b * (0.072 + 0.928 * cos_a + 0.072 * sin_a);
+                r = nr;
+                g = ng;
+                b = nb;
+            }
+            _ => {}
+        }
+    }
+    Color::rgba(
+        r.clamp(0.0, 255.0) as u8,
+        g.clamp(0.0, 255.0) as u8,
+        b.clamp(0.0, 255.0) as u8,
+        color.a,
+    )
+}
+
+/// Apply a CSS mix-blend-mode to blend a source color over a base color.
+fn apply_blend_mode(base: Color, blend: Color, mode: style::MixBlendMode) -> Color {
+    if mode == style::MixBlendMode::Normal {
+        return blend;
+    }
+    let br = base.r as f32 / 255.0;
+    let bg = base.g as f32 / 255.0;
+    let bb = base.b as f32 / 255.0;
+    let sr = blend.r as f32 / 255.0;
+    let sg = blend.g as f32 / 255.0;
+    let sb = blend.b as f32 / 255.0;
+    let (or, og, ob) = match mode {
+        style::MixBlendMode::Multiply => (br * sr, bg * sg, bb * sb),
+        style::MixBlendMode::Screen => (
+            1.0 - (1.0 - br) * (1.0 - sr),
+            1.0 - (1.0 - bg) * (1.0 - sg),
+            1.0 - (1.0 - bb) * (1.0 - sb),
+        ),
+        style::MixBlendMode::Overlay => {
+            let ov = |b: f32, s: f32| {
+                if b < 0.5 { 2.0 * b * s } else { 1.0 - 2.0 * (1.0 - b) * (1.0 - s) }
+            };
+            (ov(br, sr), ov(bg, sg), ov(bb, sb))
+        }
+        style::MixBlendMode::Darken => (br.min(sr), bg.min(sg), bb.min(sb)),
+        style::MixBlendMode::Lighten => (br.max(sr), bg.max(sg), bb.max(sb)),
+        style::MixBlendMode::Difference => ((br - sr).abs(), (bg - sg).abs(), (bb - sb).abs()),
+        style::MixBlendMode::Exclusion => (
+            br + sr - 2.0 * br * sr,
+            bg + sg - 2.0 * bg * sg,
+            bb + sb - 2.0 * bb * sb,
+        ),
+        _ => (sr, sg, sb),
+    };
+    Color::rgba(
+        (or * 255.0).clamp(0.0, 255.0) as u8,
+        (og * 255.0).clamp(0.0, 255.0) as u8,
+        (ob * 255.0).clamp(0.0, 255.0) as u8,
+        blend.a,
+    )
+}
+
 /// Paint the background color and image of a box.
 fn paint_background(layout_box: &LayoutBox, list: &mut DisplayList) {
     let style = &layout_box.computed_style;
@@ -246,7 +358,18 @@ fn paint_background(layout_box: &LayoutBox, list: &mut DisplayList) {
     let radii = style.border_radius;
     let has_radius = radii.iter().any(|&r| r > 0.0);
 
-    let color = style.background_color;
+    let mut color = style.background_color;
+    if !style.backdrop_filter.is_empty() {
+        color = apply_color_filters(color, &style.backdrop_filter);
+    }
+    if !style.filter.is_empty() {
+        color = apply_color_filters(color, &style.filter);
+    }
+    if style.mix_blend_mode != style::MixBlendMode::Normal && color.a > 0 {
+        let white = Color::rgba(255, 255, 255, 255);
+        color = apply_blend_mode(white, color, style.mix_blend_mode);
+    }
+
     if color.a > 0 {
         if has_radius {
             list.push(DisplayItem::RoundedRect {
@@ -264,8 +387,20 @@ fn paint_background(layout_box: &LayoutBox, list: &mut DisplayList) {
 
     if let style::BackgroundImage::LinearGradient { angle_deg, ref stops } = style.background_image {
         let grad_stops: Vec<(f32, Color)> = stops.iter().map(|s| (s.position, s.color)).collect();
+        let offset_x = style.background_position_x / 100.0 * border_box.w;
+        let offset_y = style.background_position_y / 100.0 * border_box.h;
+        let (grad_w, grad_h) = match style.background_size {
+            style::BackgroundSize::Explicit(w, h) => (w, h),
+            _ => (border_box.w, border_box.h),
+        };
+        let grad_rect = Rect::new(
+            border_box.x + offset_x,
+            border_box.y + offset_y,
+            grad_w,
+            grad_h,
+        );
         list.push(DisplayItem::LinearGradient {
-            rect: border_box,
+            rect: grad_rect,
             angle_deg,
             stops: grad_stops,
         });
@@ -322,6 +457,13 @@ fn paint_text(layout_box: &LayoutBox, list: &mut DisplayList) {
 
     let style = &layout_box.computed_style;
     let content_box = layout_box.box_model.content_box;
+
+    // Apply filter color effects to text color.
+    let text_color = if !style.filter.is_empty() {
+        apply_color_filters(style.color, &style.filter)
+    } else {
+        style.color
+    };
 
     // Generate simple glyph positions (one per character, evenly spaced).
     let font_size = style.font_size_px;
@@ -395,7 +537,7 @@ fn paint_text(layout_box: &LayoutBox, list: &mut DisplayList) {
     list.push(DisplayItem::TextRun {
         rect: content_box,
         text: display_text,
-        color: style.color,
+        color: text_color,
         font_size,
         glyphs,
     });
@@ -408,14 +550,14 @@ fn paint_text(layout_box: &LayoutBox, list: &mut DisplayList) {
             let thickness = (font_size / 14.0).max(1.0);
             list.push(DisplayItem::SolidRect {
                 rect: Rect::new(content_box.x, line_y, text_width, thickness),
-                color: style.color,
+                color: text_color,
             });
         }
         style::TextDecoration::Overline => {
             let thickness = (font_size / 14.0).max(1.0);
             list.push(DisplayItem::SolidRect {
                 rect: Rect::new(content_box.x, content_box.y, text_width, thickness),
-                color: style.color,
+                color: text_color,
             });
         }
         style::TextDecoration::LineThrough => {
@@ -423,7 +565,7 @@ fn paint_text(layout_box: &LayoutBox, list: &mut DisplayList) {
             let thickness = (font_size / 14.0).max(1.0);
             list.push(DisplayItem::SolidRect {
                 rect: Rect::new(content_box.x, line_y, text_width, thickness),
-                color: style.color,
+                color: text_color,
             });
         }
         style::TextDecoration::None => {}

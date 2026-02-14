@@ -172,10 +172,22 @@ pub fn layout_inline_content(
     }
 
     // Apply text-align offset (inherited, so read from first child).
-    let text_align = children.first()
-        .and_then(|&id| tree.get(id))
-        .map(|b| b.computed_style.text_align)
-        .unwrap_or(TextAlign::Left);
+    // Direction: RTL flips default alignment from Left to Right.
+    let text_align = {
+        let base = children.first()
+            .and_then(|&id| tree.get(id))
+            .map(|b| b.computed_style.text_align)
+            .unwrap_or(TextAlign::Left);
+        let dir = children.first()
+            .and_then(|&id| tree.get(id))
+            .map(|b| b.computed_style.direction)
+            .unwrap_or(style::Direction::Ltr);
+        if dir == style::Direction::Rtl && base == TextAlign::Left {
+            TextAlign::Right
+        } else {
+            base
+        }
+    };
 
     if text_align != TextAlign::Left {
         for line in &mut lines {

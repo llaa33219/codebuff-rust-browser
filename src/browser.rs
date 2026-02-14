@@ -564,12 +564,26 @@ impl BrowserEngine {
             let rect = find_layout_box_for_node(&page.layout_tree, img_id)
                 .unwrap_or(common::Rect::ZERO);
 
-            let display_rect = if rect.w < 2.0 || rect.h < 2.0 {
+            let base_rect = if rect.w < 2.0 || rect.h < 2.0 {
                 let w = (image.width as f32).min(800.0);
                 let h = (image.height as f32).min(600.0);
                 common::Rect::new(rect.x, rect.y, w, h)
             } else {
                 rect
+            };
+
+            // Apply object-fit / object-position.
+            let display_rect = if let Some(img_style) = page.style_map.get(&img_id) {
+                apply_object_fit(
+                    base_rect,
+                    image.width as f32,
+                    image.height as f32,
+                    img_style.object_fit,
+                    img_style.object_position_x,
+                    img_style.object_position_y,
+                )
+            } else {
+                base_rect
             };
 
             let image_id = next_image_id;
@@ -661,8 +675,21 @@ impl BrowserEngine {
         if self.width == 0 || self.height == 0 {
             return;
         }
-        // Clear framebuffer
-        self.framebuffer.clear(0xFFFF_FFFF);
+        // Clear framebuffer (default white, or dark if color-scheme: dark).
+        let bg_color = if let Some(tab_id) = self.shell.tab_manager.active_tab_id() {
+            if let Some(page) = self.pages.get(&tab_id) {
+                let is_dark = page.layout_tree.root
+                    .and_then(|id| page.layout_tree.get(id))
+                    .map(|b| b.computed_style.color_scheme == style::ColorScheme::Dark)
+                    .unwrap_or(false);
+                if is_dark { 0xFF1E1E1E } else { 0xFFFF_FFFF }
+            } else {
+                0xFFFF_FFFF
+            }
+        } else {
+            0xFFFF_FFFF
+        };
+        self.framebuffer.clear(bg_color);
 
         // Render page content (if any)
         if let Some(tab_id) = self.shell.tab_manager.active_tab_id() {
@@ -1286,6 +1313,52 @@ fn offset_display_item(item: &DisplayItem, dy: f32) -> DisplayItem {
         },
 
         DisplayItem::PopOpacity => DisplayItem::PopOpacity,
+    }
+}
+
+/// Apply object-fit and object-position to compute the display rect for an image.
+fn apply_object_fit(
+    container: Rect,
+    img_w: f32,
+    img_h: f32,
+    fit: style::ObjectFit,
+    pos_x: f32,
+    pos_y: f32,
+) -> Rect {
+    if img_w <= 0.0 || img_h <= 0.0 {
+        return container;
+    }
+    match fit {
+        style::ObjectFit::Fill => container,
+        style::ObjectFit::Contain => {
+            let scale = (container.w / img_w).min(container.h / img_h);
+            let w = img_w * scale;
+            let h = img_h * scale;
+            let x = container.x + (container.w - w) * (pos_x / 100.0);
+            let y = container.y + (container.h - h) * (pos_y / 100.0);
+            Rect::new(x, y, w, h)
+        }
+        style::ObjectFit::Cover => {
+            let scale = (container.w / img_w).max(container.h / img_h);
+            let w = img_w * scale;
+            let h = img_h * scale;
+            let x = container.x + (container.w - w) * (pos_x / 100.0);
+            let y = container.y + (container.h - h) * (pos_y / 100.0);
+            Rect::new(x, y, w, h)
+        }
+        style::ObjectFit::None => {
+            let x = container.x + (container.w - img_w) * (pos_x / 100.0);
+            let y = container.y + (container.h - img_h) * (pos_y / 100.0);
+            Rect::new(x, y, img_w, img_h)
+        }
+        style::ObjectFit::ScaleDown => {
+            let scale = (container.w / img_w).min(container.h / img_h).min(1.0);
+            let w = img_w * scale;
+            let h = img_h * scale;
+            let x = container.x + (container.w - w) * (pos_x / 100.0);
+            let y = container.y + (container.h - h) * (pos_y / 100.0);
+            Rect::new(x, y, w, h)
+        }
     }
 }
 
