@@ -45,6 +45,16 @@ pub fn layout_inline_content(
     let mut cursor_x = 0.0f32;
     let mut cursor_y = 0.0f32;
 
+    // Detect vertical writing mode and delegate.
+    let is_vertical = children.first()
+        .and_then(|&id| tree.get(id))
+        .map(|b| matches!(b.computed_style.writing_mode, style::WritingMode::VerticalRl | style::WritingMode::VerticalLr))
+        .unwrap_or(false);
+
+    if is_vertical {
+        return layout_vertical_inline(tree, children, available_width);
+    }
+
     for &child_id in children {
         let (mut child_width, mut child_height) = measure_inline_box(tree, child_id, available_width);
 
@@ -230,6 +240,17 @@ fn measure_inline_box(tree: &LayoutTree, box_id: LayoutBoxId, _available_width: 
         LayoutBoxKind::TextRun => {
             let text = b.text.as_deref().unwrap_or("");
             let avg_char_width = font_size * 0.6;
+
+            // Vertical writing mode: each character stacks vertically.
+            let is_vertical = matches!(
+                b.computed_style.writing_mode,
+                style::WritingMode::VerticalRl | style::WritingMode::VerticalLr
+            );
+            if is_vertical {
+                let char_count = text.chars().count() as f32;
+                return (font_size, char_count * line_height);
+            }
+
             let tab_width = b.computed_style.tab_size * avg_char_width;
             let mut width = 0.0f32;
             for ch in text.chars() {
@@ -294,6 +315,55 @@ fn position_inline_children(tree: &mut LayoutTree, parent_id: LayoutBoxId) {
             position_inline_children(tree, child_id);
         }
     }
+}
+
+/// Lay out inline children vertically for vertical writing modes.
+/// Characters stack top-to-bottom; columns flow left/right.
+fn layout_vertical_inline(
+    tree: &mut LayoutTree,
+    children: &[LayoutBoxId],
+    available_height: f32,
+) -> Vec<LineBox> {
+    let mut cursor_y = 0.0f32;
+    let mut cursor_x = 0.0f32;
+    let mut col_width = 0.0f32;
+    let mut items = Vec::new();
+
+    for &child_id in children {
+        let (child_width, child_height) = measure_inline_box(tree, child_id, available_height);
+
+        // Wrap to next column if exceeding available height.
+        if cursor_y + child_height > available_height && cursor_y > 0.0 {
+            cursor_x += col_width;
+            cursor_y = 0.0;
+            col_width = 0.0;
+        }
+
+        if let Some(b) = tree.get_mut(child_id) {
+            b.box_model.content_box = Rect::new(cursor_x, cursor_y, child_width, child_height);
+            b.box_model.border_box = b.box_model.content_box;
+            b.box_model.padding_box = b.box_model.content_box;
+            b.box_model.margin_box = b.box_model.content_box;
+        }
+
+        items.push(LineItem {
+            box_id: child_id,
+            x: cursor_x,
+            width: child_width,
+            height: child_height,
+        });
+
+        col_width = col_width.max(child_width);
+        cursor_y += child_height;
+    }
+
+    vec![LineBox {
+        x: 0.0,
+        y: 0.0,
+        width: cursor_x + col_width,
+        height: cursor_y,
+        items,
+    }]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -66,8 +66,8 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
         )
     };
 
-    // Read multi-column and table properties.
-    let (column_count, column_gap, border_spacing_val) = tree.get(box_id)
+    // Read multi-column, table, and writing-mode properties.
+    let (column_count, column_gap, border_spacing_val, table_layout_mode) = tree.get(box_id)
         .map(|b| {
             let spacing = if b.computed_style.border_collapse == style::BorderCollapse::Collapse {
                 0.0
@@ -78,9 +78,10 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
                 b.computed_style.column_count.unwrap_or(0),
                 b.computed_style.column_gap_val.unwrap_or(0.0),
                 spacing,
+                b.computed_style.table_layout,
             )
         })
-        .unwrap_or((0, 0.0, 0.0));
+        .unwrap_or((0, 0.0, 0.0, style::TableLayout::Auto));
 
     // Sanitize margins: replace auto sentinels (INFINITY) with 0 for width calculation.
     let safe_margin = Edges {
@@ -152,7 +153,9 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
         content_height = specified_height.unwrap_or(0.0);
     } else if has_block_children && !has_inline_children {
         // Pure block formatting context.
-        if column_count > 1 {
+        if table_layout_mode == style::TableLayout::Fixed {
+            content_height = layout_table_fixed(tree, &flow_children, content_width);
+        } else if column_count > 1 {
             content_height = layout_multi_column(tree, &flow_children, content_width, column_count, column_gap);
         } else {
             content_height = layout_block_children(tree, &flow_children, content_width, border_spacing_val);
@@ -330,6 +333,72 @@ fn layout_block_children(
             .unwrap_or(0.0);
     }
 
+    cursor_y
+}
+
+/// Layout children as table rows with fixed-width cells.
+///
+/// When `table-layout: fixed` is set, each row's cells get equal width
+/// (containing_width / number_of_cells). This is much faster than auto
+/// table layout since widths don't depend on content.
+fn layout_table_fixed(
+    tree: &mut LayoutTree,
+    children: &[LayoutBoxId],
+    containing_width: f32,
+) -> f32 {
+    if children.is_empty() {
+        return 0.0;
+    }
+    let mut cursor_y = 0.0f32;
+    for &row_id in children {
+        let row_children = tree.children(row_id);
+        if !row_children.is_empty() {
+            let cell_count = row_children.len() as f32;
+            let cell_width = containing_width / cell_count;
+            let mut max_cell_h = 0.0f32;
+
+            // Layout each cell at its fixed-width slot.
+            for (i, &cell_id) in row_children.iter().enumerate() {
+                let (_w, _h) = layout_block(tree, cell_id, cell_width);
+                if let Some(cb) = tree.get_mut(cell_id) {
+                    let target_x = i as f32 * cell_width;
+                    let dx = target_x - cb.box_model.border_box.x;
+                    let dy = cursor_y - cb.box_model.border_box.y;
+                    cb.box_model.content_box.x += dx;
+                    cb.box_model.content_box.y += dy;
+                    cb.box_model.padding_box.x += dx;
+                    cb.box_model.padding_box.y += dy;
+                    cb.box_model.border_box.x += dx;
+                    cb.box_model.border_box.y += dy;
+                    cb.box_model.margin_box.x += dx;
+                    cb.box_model.margin_box.y += dy;
+                    max_cell_h = max_cell_h.max(cb.box_model.border_box.h);
+                }
+            }
+
+            // Position the row itself.
+            let (_w, row_h) = layout_block(tree, row_id, containing_width);
+            if let Some(rb) = tree.get_mut(row_id) {
+                let dy = cursor_y - rb.box_model.border_box.y;
+                rb.box_model.content_box.y += dy;
+                rb.box_model.padding_box.y += dy;
+                rb.box_model.border_box.y += dy;
+                rb.box_model.margin_box.y += dy;
+            }
+            cursor_y += row_h.max(max_cell_h);
+        } else {
+            // No cells — treat as a regular block child.
+            let (_w, h) = layout_block(tree, row_id, containing_width);
+            if let Some(rb) = tree.get_mut(row_id) {
+                let dy = cursor_y - rb.box_model.border_box.y;
+                rb.box_model.content_box.y += dy;
+                rb.box_model.padding_box.y += dy;
+                rb.box_model.border_box.y += dy;
+                rb.box_model.margin_box.y += dy;
+            }
+            cursor_y += h;
+        }
+    }
     cursor_y
 }
 

@@ -472,13 +472,31 @@ fn paint_text(layout_box: &LayoutBox, list: &mut DisplayList) {
     let mut x_offset = 0.0f32;
     let y_offset = font_size; // baseline approximation
 
-    for ch in text.chars() {
-        glyphs.push(PositionedGlyph {
-            glyph_id: ch as u16,
-            x: content_box.x + x_offset,
-            y: content_box.y + y_offset,
-        });
-        x_offset += avg_char_width;
+    let is_vertical = matches!(
+        style.writing_mode,
+        style::WritingMode::VerticalRl | style::WritingMode::VerticalLr
+    );
+
+    if is_vertical {
+        let mut vert_y = 0.0f32;
+        for ch in text.chars() {
+            glyphs.push(PositionedGlyph {
+                glyph_id: ch as u16,
+                x: content_box.x + font_size * 0.2,
+                y: content_box.y + vert_y + font_size,
+            });
+            vert_y += style.line_height_px;
+        }
+        x_offset = font_size;
+    } else {
+        for ch in text.chars() {
+            glyphs.push(PositionedGlyph {
+                glyph_id: ch as u16,
+                x: content_box.x + x_offset,
+                y: content_box.y + y_offset,
+            });
+            x_offset += avg_char_width;
+        }
     }
 
     // Handle text-overflow: ellipsis when text overflows.

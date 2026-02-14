@@ -133,6 +133,8 @@ pub struct PageData {
     pub display_list: Vec<DisplayItem>,
     pub image_store: ImageStore,
     pub scroll_y: f32,
+    pub scroll_target_y: f32,
+    pub scroll_animating: bool,
     pub content_height: f32,
     pub title: String,
     pub url: String,
@@ -275,13 +277,29 @@ impl BrowserEngine {
                 }
             }
 
-            // 2. Render if needed
+            // 2. Animate smooth scrolling.
+            if let Some(tab_id) = self.shell.tab_manager.active_tab_id() {
+                if let Some(page) = self.pages.get_mut(&tab_id) {
+                    if page.scroll_animating {
+                        let diff = page.scroll_target_y - page.scroll_y;
+                        if diff.abs() < 0.5 {
+                            page.scroll_y = page.scroll_target_y;
+                            page.scroll_animating = false;
+                        } else {
+                            page.scroll_y += diff * 0.15;
+                        }
+                        self.needs_render = true;
+                    }
+                }
+            }
+
+            // 3. Render if needed
             if self.needs_render {
                 self.render_frame();
                 self.needs_render = false;
             }
 
-            // 3. Sleep to avoid busy-waiting (~120 fps cap)
+            // 4. Sleep to avoid busy-waiting (~120 fps cap)
             std::thread::sleep(std::time::Duration::from_millis(8));
         }
     }
@@ -661,6 +679,8 @@ impl BrowserEngine {
             display_list,
             image_store: HashMap::new(),
             scroll_y: 0.0,
+            scroll_target_y: 0.0,
+            scroll_animating: false,
             content_height,
             title,
             url: url.to_string(),
@@ -804,11 +824,23 @@ impl BrowserEngine {
     fn handle_scroll(&mut self, dy: f32) {
         if let Some(tab_id) = self.shell.tab_manager.active_tab_id() {
             if let Some(page) = self.pages.get_mut(&tab_id) {
-                page.scroll_y = (page.scroll_y + dy).max(0.0);
                 let max_scroll = (page.content_height
                     - self.height.saturating_sub(CHROME_HEIGHT + STATUS_BAR_HEIGHT) as f32)
                     .max(0.0);
-                page.scroll_y = page.scroll_y.min(max_scroll);
+
+                // Check if the page uses scroll-behavior: smooth.
+                let smooth = page.layout_tree.root
+                    .and_then(|id| page.layout_tree.get(id))
+                    .map(|b| b.computed_style.scroll_behavior == style::ScrollBehavior::Smooth)
+                    .unwrap_or(false);
+
+                if smooth {
+                    page.scroll_target_y = (page.scroll_target_y + dy).clamp(0.0, max_scroll);
+                    page.scroll_animating = true;
+                } else {
+                    page.scroll_y = (page.scroll_y + dy).clamp(0.0, max_scroll);
+                    page.scroll_target_y = page.scroll_y;
+                }
                 self.needs_render = true;
             }
         }
