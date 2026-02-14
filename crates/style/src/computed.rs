@@ -802,6 +802,85 @@ impl Default for EmptyCells {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MixBlendMode
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MixBlendMode {
+    Normal,
+    Multiply,
+    Screen,
+    Overlay,
+    Darken,
+    Lighten,
+    ColorDodge,
+    ColorBurn,
+    HardLight,
+    SoftLight,
+    Difference,
+    Exclusion,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
+}
+
+impl Default for MixBlendMode {
+    fn default() -> Self {
+        MixBlendMode::Normal
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Isolation
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Isolation {
+    Auto,
+    Isolate,
+}
+
+impl Default for Isolation {
+    fn default() -> Self {
+        Isolation::Auto
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ScrollBehavior
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollBehavior {
+    Auto,
+    Smooth,
+}
+
+impl Default for ScrollBehavior {
+    fn default() -> Self {
+        ScrollBehavior::Auto
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ColorScheme
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColorScheme {
+    Normal,
+    Light,
+    Dark,
+}
+
+impl Default for ColorScheme {
+    fn default() -> Self {
+        ColorScheme::Normal
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // TransformFunction
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1052,6 +1131,24 @@ pub struct ComputedStyle {
     pub will_change: bool,
     pub contain_layout: bool,
     pub contain_paint: bool,
+
+    // -- Blending --
+    pub mix_blend_mode: MixBlendMode,
+    pub isolation: Isolation,
+
+    // -- Scroll --
+    pub scroll_behavior: ScrollBehavior,
+
+    // -- Colors --
+    pub accent_color: Option<Color>,
+    pub caret_color: Option<Color>,
+    pub color_scheme: ColorScheme,
+
+    // -- Transition/Animation (stored for future use) --
+    pub transition_duration_ms: f32,
+    pub transition_property: Option<String>,
+    pub animation_name: Option<String>,
+    pub animation_duration_ms: f32,
 }
 
 impl Default for ComputedStyle {
@@ -1189,6 +1286,20 @@ impl Default for ComputedStyle {
             will_change: false,
             contain_layout: false,
             contain_paint: false,
+
+            mix_blend_mode: MixBlendMode::Normal,
+            isolation: Isolation::Auto,
+
+            scroll_behavior: ScrollBehavior::Auto,
+
+            accent_color: None,
+            caret_color: None,
+            color_scheme: ColorScheme::Normal,
+
+            transition_duration_ms: 0.0,
+            transition_property: None,
+            animation_name: None,
+            animation_duration_ms: 0.0,
         }
     }
 }
@@ -1231,6 +1342,8 @@ impl ComputedStyle {
             || !self.transform.is_empty()
             || !self.filter.is_empty()
             || self.will_change
+            || self.mix_blend_mode != MixBlendMode::Normal
+            || self.isolation == Isolation::Isolate
     }
 }
 

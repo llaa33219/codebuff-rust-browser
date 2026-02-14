@@ -217,9 +217,16 @@ fn measure_inline_box(tree: &LayoutTree, box_id: LayoutBoxId, _available_width: 
     match b.kind {
         LayoutBoxKind::TextRun => {
             let text = b.text.as_deref().unwrap_or("");
-            // Simple width estimate: ~0.6 * font_size per character.
             let avg_char_width = font_size * 0.6;
-            let width = text.chars().count() as f32 * avg_char_width;
+            let tab_width = b.computed_style.tab_size * avg_char_width;
+            let mut width = 0.0f32;
+            for ch in text.chars() {
+                if ch == '\t' {
+                    width += tab_width;
+                } else {
+                    width += avg_char_width;
+                }
+            }
             (width, line_height)
         }
         LayoutBoxKind::Inline => {

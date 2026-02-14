@@ -439,6 +439,8 @@ fn inherit_from_parent(parent: &ComputedStyle) -> ComputedStyle {
     s.border_spacing = parent.border_spacing;
     s.empty_cells = parent.empty_cells;
     s.caption_side = parent.caption_side;
+    s.caret_color = parent.caret_color;
+    s.color_scheme = parent.color_scheme;
 
     s
 }
@@ -2082,21 +2084,159 @@ pub fn apply_declaration(
             }
         }
 
-        // Silently accept properties we can't implement yet.
-        "transition" | "transition-property" | "transition-duration"
-        | "transition-timing-function" | "transition-delay"
-        | "animation" | "animation-name" | "animation-duration"
-        | "animation-timing-function" | "animation-delay" | "animation-iteration-count"
-        | "animation-direction" | "animation-fill-mode" | "animation-play-state"
-        | "mix-blend-mode" | "isolation"
-        | "clip" | "clip-path" | "mask" | "mask-image"
-        | "scroll-behavior" | "scroll-snap-type" | "scroll-snap-align"
-        | "overscroll-behavior" | "overscroll-behavior-x" | "overscroll-behavior-y"
-        | "counter-reset" | "counter-increment" | "counter-set"
-        | "accent-color" | "caret-color" | "color-scheme"
-        | "forced-color-adjust" | "print-color-adjust"
-        | "page" | "orphans" | "widows"
-        | "all" => {}
+        "mix-blend-mode" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.mix_blend_mode = match kw {
+                    "normal" => MixBlendMode::Normal,
+                    "multiply" => MixBlendMode::Multiply,
+                    "screen" => MixBlendMode::Screen,
+                    "overlay" => MixBlendMode::Overlay,
+                    "darken" => MixBlendMode::Darken,
+                    "lighten" => MixBlendMode::Lighten,
+                    "color-dodge" => MixBlendMode::ColorDodge,
+                    "color-burn" => MixBlendMode::ColorBurn,
+                    "hard-light" => MixBlendMode::HardLight,
+                    "soft-light" => MixBlendMode::SoftLight,
+                    "difference" => MixBlendMode::Difference,
+                    "exclusion" => MixBlendMode::Exclusion,
+                    "hue" => MixBlendMode::Hue,
+                    "saturation" => MixBlendMode::Saturation,
+                    "color" => MixBlendMode::Color,
+                    "luminosity" => MixBlendMode::Luminosity,
+                    _ => style.mix_blend_mode,
+                };
+            }
+        }
+        "isolation" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.isolation = match kw {
+                    "auto" => Isolation::Auto,
+                    "isolate" => Isolation::Isolate,
+                    _ => style.isolation,
+                };
+            }
+        }
+        "scroll-behavior" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.scroll_behavior = match kw {
+                    "auto" => ScrollBehavior::Auto,
+                    "smooth" => ScrollBehavior::Smooth,
+                    _ => style.scroll_behavior,
+                };
+            }
+        }
+        "accent-color" => {
+            if matches!(decl.value.first(), Some(CssValue::Auto)) {
+                style.accent_color = None;
+            } else if let Some(c) = first_color_or_current(&decl.value, style.color) {
+                style.accent_color = Some(c);
+            }
+        }
+        "caret-color" => {
+            if matches!(decl.value.first(), Some(CssValue::Auto)) {
+                style.caret_color = None;
+            } else if let Some(c) = first_color_or_current(&decl.value, style.color) {
+                style.caret_color = Some(c);
+            }
+        }
+        "color-scheme" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.color_scheme = match kw {
+                    "normal" => ColorScheme::Normal,
+                    "light" => ColorScheme::Light,
+                    "dark" => ColorScheme::Dark,
+                    _ => style.color_scheme,
+                };
+            }
+        }
+
+        "transition" => {
+            for v in &decl.value {
+                match v {
+                    CssValue::Length(val, unit) => {
+                        let ms = resolve_time_to_ms(*val, unit);
+                        if style.transition_duration_ms == 0.0 { style.transition_duration_ms = ms; }
+                    }
+                    CssValue::Number(n) if *n > 0.0 => {
+                        if style.transition_duration_ms == 0.0 {
+                            style.transition_duration_ms = (*n as f32) * 1000.0;
+                        }
+                    }
+                    CssValue::Keyword(kw) if !matches!(kw.as_str(), "ease" | "linear" | "ease-in" | "ease-out" | "ease-in-out" | "all" | "none") => {
+                        if style.transition_property.is_none() {
+                            style.transition_property = Some(kw.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        "transition-property" => {
+            if let Some(kw) = first_keyword_or_none(&decl.value) {
+                style.transition_property = if kw == "none" || kw == "all" { None } else { Some(kw.to_string()) };
+            }
+        }
+        "transition-duration" => {
+            for v in &decl.value {
+                match v {
+                    CssValue::Length(val, unit) => { style.transition_duration_ms = resolve_time_to_ms(*val, unit); break; }
+                    CssValue::Number(n) => { style.transition_duration_ms = (*n as f32) * 1000.0; break; }
+                    _ => {}
+                }
+            }
+        }
+        "transition-timing-function" | "transition-delay" => {}
+
+        "animation" => {
+            for v in &decl.value {
+                match v {
+                    CssValue::Length(val, unit) => {
+                        let ms = resolve_time_to_ms(*val, unit);
+                        if style.animation_duration_ms == 0.0 { style.animation_duration_ms = ms; }
+                    }
+                    CssValue::Number(n) if *n > 0.0 => {
+                        if style.animation_duration_ms == 0.0 {
+                            style.animation_duration_ms = (*n as f32) * 1000.0;
+                        }
+                    }
+                    CssValue::Keyword(kw) if !matches!(kw.as_str(), "ease" | "linear" | "ease-in" | "ease-out" | "ease-in-out" | "none" | "normal" | "reverse" | "alternate" | "alternate-reverse" | "infinite" | "forwards" | "backwards" | "both" | "running" | "paused") => {
+                        if style.animation_name.is_none() {
+                            style.animation_name = Some(kw.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        "animation-name" => {
+            if let Some(kw) = first_keyword_or_none(&decl.value) {
+                style.animation_name = if kw == "none" { None } else { Some(kw.to_string()) };
+            } else if let Some(CssValue::String(s)) = decl.value.first() {
+                style.animation_name = Some(s.clone());
+            }
+        }
+        "animation-duration" => {
+            for v in &decl.value {
+                match v {
+                    CssValue::Length(val, unit) => { style.animation_duration_ms = resolve_time_to_ms(*val, unit); break; }
+                    CssValue::Number(n) => { style.animation_duration_ms = (*n as f32) * 1000.0; break; }
+                    _ => {}
+                }
+            }
+        }
+        "animation-timing-function" | "animation-delay" | "animation-iteration-count"
+        | "animation-direction" | "animation-fill-mode" | "animation-play-state" => {}
+
+        "counter-reset" | "counter-increment" | "counter-set" => {}
+
+        "scroll-snap-type" | "scroll-snap-align"
+        | "overscroll-behavior" | "overscroll-behavior-x" | "overscroll-behavior-y" => {}
+
+        "clip" | "clip-path" | "mask" | "mask-image" => {}
+
+        "forced-color-adjust" | "print-color-adjust" => {}
+
+        "page" | "orphans" | "widows" | "all" => {}
 
         _ => {
             // Unknown property — ignore.
@@ -2147,6 +2287,8 @@ fn is_inherited_property(name: &str) -> bool {
             | "border-spacing"
             | "empty-cells"
             | "caption-side"
+            | "caret-color"
+            | "color-scheme"
     )
 }
 
@@ -2180,6 +2322,8 @@ fn apply_inherit(style: &mut ComputedStyle, prop: &str, parent: &ComputedStyle) 
         "border-spacing" => style.border_spacing = parent.border_spacing,
         "empty-cells" => style.empty_cells = parent.empty_cells,
         "caption-side" => style.caption_side = parent.caption_side,
+        "caret-color" => style.caret_color = parent.caret_color,
+        "color-scheme" => style.color_scheme = parent.color_scheme,
         _ => {}
     }
 }
@@ -2253,6 +2397,15 @@ fn apply_initial(style: &mut ComputedStyle, prop: &str) {
         "column-width" => style.column_width = def.column_width,
         "will-change" => style.will_change = def.will_change,
         "contain" => { style.contain_layout = def.contain_layout; style.contain_paint = def.contain_paint; }
+        "mix-blend-mode" => style.mix_blend_mode = def.mix_blend_mode,
+        "isolation" => style.isolation = def.isolation,
+        "scroll-behavior" => style.scroll_behavior = def.scroll_behavior,
+        "accent-color" => style.accent_color = def.accent_color,
+        "caret-color" => style.caret_color = def.caret_color,
+        "color-scheme" => style.color_scheme = def.color_scheme,
+        "transition" | "transition-duration" | "transition-property" => { style.transition_duration_ms = def.transition_duration_ms; style.transition_property = def.transition_property.clone(); }
+        "animation" | "animation-duration" => style.animation_duration_ms = def.animation_duration_ms,
+        "animation-name" => style.animation_name = def.animation_name.clone(),
         _ => {}
     }
 }
@@ -2760,6 +2913,13 @@ fn parse_filter_list(values: &[CssValue], font_size: f32, current_color: Color) 
         }
     }
     filters
+}
+
+fn resolve_time_to_ms(val: f64, unit: &LengthUnit) -> f32 {
+    match unit {
+        LengthUnit::Px => val as f32,
+        _ => (val * 1000.0) as f32,
+    }
 }
 
 fn apply_border_side_shorthand(values: &[CssValue], side: &mut BorderSide, parent_font_size: f32, current_color: Color) {

@@ -146,9 +146,10 @@ fn paint_layout_box(tree: &LayoutTree, box_id: LayoutBoxId, list: &mut DisplayLi
         });
     }
 
-    // Handle overflow clipping.
+    // Handle overflow clipping (includes contain: paint).
     let needs_clip = matches!(style.overflow_x, Overflow::Hidden | Overflow::Scroll)
-        || matches!(style.overflow_y, Overflow::Hidden | Overflow::Scroll);
+        || matches!(style.overflow_y, Overflow::Hidden | Overflow::Scroll)
+        || style.contain_paint;
     if needs_clip {
         list.push(DisplayItem::PushClip {
             rect: layout_box.box_model.padding_box,
