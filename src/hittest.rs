@@ -67,11 +67,17 @@ fn find_deepest_box(
 
     // Try children first (depth-first) — iterate in reverse so that
     // later children (painted on top) are checked first.
+    // Children with pointer-events:auto are still clickable even if parent is none.
     let children = tree.children(box_id);
     for &child_id in children.iter().rev() {
         if let Some(node_id) = find_deepest_box(tree, child_id, x, y) {
             return Some(node_id);
         }
+    }
+
+    // Skip this box itself if pointer-events: none.
+    if layout_box.computed_style.pointer_events == style::PointerEvents::None {
+        return None;
     }
 
     // No child matched — return this box's node (if it has one).

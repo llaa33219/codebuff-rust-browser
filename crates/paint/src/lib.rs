@@ -136,11 +136,13 @@ fn paint_layout_box(tree: &LayoutTree, box_id: LayoutBoxId, list: &mut DisplayLi
 
     let is_visible = style.visibility == Visibility::Visible;
 
-    // Handle opacity (always wrap — affects visible children even if parent is hidden).
-    let needs_opacity = style.opacity < 1.0;
+    // Handle opacity (CSS opacity + filter:opacity combined).
+    let filter_opacity = compute_filter_opacity(&style.filter);
+    let combined_opacity = style.opacity * filter_opacity;
+    let needs_opacity = combined_opacity < 1.0;
     if needs_opacity {
         list.push(DisplayItem::PushOpacity {
-            opacity: style.opacity,
+            opacity: combined_opacity,
         });
     }
 
@@ -448,6 +450,17 @@ fn paint_outline(layout_box: &LayoutBox, list: &mut DisplayList) {
         colors: [style.outline_color; 4],
         styles: [style.outline_style; 4],
     });
+}
+
+/// Compute the combined opacity from filter:opacity() functions.
+fn compute_filter_opacity(filters: &[style::FilterFunction]) -> f32 {
+    let mut opacity = 1.0f32;
+    for f in filters {
+        if let style::FilterFunction::Opacity(o) = f {
+            opacity *= o;
+        }
+    }
+    opacity
 }
 
 /// Paint children of a layout box in stacking order.

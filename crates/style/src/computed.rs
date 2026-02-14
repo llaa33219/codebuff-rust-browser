@@ -802,6 +802,42 @@ impl Default for EmptyCells {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TransformFunction
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TransformFunction {
+    Translate(f32, f32),
+    TranslateX(f32),
+    TranslateY(f32),
+    Scale(f32, f32),
+    ScaleX(f32),
+    ScaleY(f32),
+    Rotate(f32),
+    SkewX(f32),
+    SkewY(f32),
+    Matrix(f32, f32, f32, f32, f32, f32),
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FilterFunction
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FilterFunction {
+    Opacity(f32),
+    Blur(f32),
+    Brightness(f32),
+    Contrast(f32),
+    Grayscale(f32),
+    Saturate(f32),
+    Invert(f32),
+    Sepia(f32),
+    HueRotate(f32),
+    DropShadow(f32, f32, f32, Color),
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // BackgroundImage
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -997,6 +1033,25 @@ pub struct ComputedStyle {
 
     // -- Content --
     pub content: Option<String>,
+
+    // -- Transform --
+    pub transform: Vec<TransformFunction>,
+    pub transform_origin_x: f32,
+    pub transform_origin_y: f32,
+
+    // -- Filter --
+    pub filter: Vec<FilterFunction>,
+    pub backdrop_filter: Vec<FilterFunction>,
+
+    // -- Multi-column --
+    pub column_count: Option<u32>,
+    pub column_width: Option<f32>,
+    pub column_gap_val: Option<f32>,
+
+    // -- Containment --
+    pub will_change: bool,
+    pub contain_layout: bool,
+    pub contain_paint: bool,
 }
 
 impl Default for ComputedStyle {
@@ -1119,6 +1174,21 @@ impl Default for ComputedStyle {
             aspect_ratio: None,
 
             content: None,
+
+            transform: Vec::new(),
+            transform_origin_x: 50.0,
+            transform_origin_y: 50.0,
+
+            filter: Vec::new(),
+            backdrop_filter: Vec::new(),
+
+            column_count: None,
+            column_width: None,
+            column_gap_val: None,
+
+            will_change: false,
+            contain_layout: false,
+            contain_paint: false,
         }
     }
 }
@@ -1158,6 +1228,9 @@ impl ComputedStyle {
             || self.opacity < 1.0
             || self.position == Position::Fixed
             || self.position == Position::Sticky
+            || !self.transform.is_empty()
+            || !self.filter.is_empty()
+            || self.will_change
     }
 }
 

@@ -16,7 +16,7 @@ use crate::flex::layout_flex;
 /// Returns `(width, height)` of the border box.
 pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width: f32) -> (f32, f32) {
     // Read style values we need.
-    let (margin, padding, border_widths, specified_width, specified_height, display, min_width, max_width, min_height, max_height, box_sizing) = {
+    let (margin, padding, border_widths, specified_width, specified_height, display, min_width, max_width, min_height, max_height, box_sizing, aspect_ratio) = {
         let b = match tree.get(box_id) {
             Some(b) => b,
             None => return (0.0, 0.0),
@@ -62,6 +62,7 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
                 _ => None,
             },
             s.box_sizing,
+            s.aspect_ratio,
         )
     };
 
@@ -153,6 +154,12 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
             }
         }
         None => content_height,
+    };
+
+    // Enforce aspect ratio: if only one dimension is specified, compute the other.
+    let final_height = match (aspect_ratio, specified_height, specified_width) {
+        (Some(ratio), None, Some(_)) if ratio > 0.0 => content_width / ratio,
+        _ => final_height,
     };
 
     // Enforce max-height first, then min-height (per CSS spec, min wins if min > max).
@@ -424,6 +431,24 @@ fn resolve_auto_margins(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Transform helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn compute_translate(transforms: &[style::TransformFunction]) -> (f32, f32) {
+    let mut tx = 0.0f32;
+    let mut ty = 0.0f32;
+    for t in transforms {
+        match t {
+            style::TransformFunction::Translate(x, y) => { tx += x; ty += y; }
+            style::TransformFunction::TranslateX(x) => tx += x,
+            style::TransformFunction::TranslateY(y) => ty += y,
+            _ => {}
+        }
+    }
+    (tx, ty)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Absolute positioning
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -453,8 +478,10 @@ pub fn resolve_absolute_positions(
         } else {
             (0.0, 0.0)
         };
-        let offset_x = parent_x + rel_dx;
-        let offset_y = parent_y + rel_dy;
+        // Apply transform: translate offsets.
+        let (tx, ty) = compute_translate(&b.computed_style.transform);
+        let offset_x = parent_x + rel_dx + tx;
+        let offset_y = parent_y + rel_dy + ty;
 
         b.box_model.content_box.x += offset_x;
         b.box_model.content_box.y += offset_y;

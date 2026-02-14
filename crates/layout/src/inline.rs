@@ -53,6 +53,21 @@ pub fn layout_inline_content(
             .map(|b| !matches!(b.computed_style.white_space, style::WhiteSpace::NoWrap | style::WhiteSpace::Pre))
             .unwrap_or(true);
 
+        // Check word-break / overflow-wrap for character-level wrapping (TextRun only).
+        let can_break_word = tree.get(child_id)
+            .map(|b| {
+                b.kind == LayoutBoxKind::TextRun
+                    && (matches!(b.computed_style.word_break, style::WordBreak::BreakAll | style::WordBreak::BreakWord)
+                        || matches!(b.computed_style.overflow_wrap, style::OverflowWrap::BreakWord | style::OverflowWrap::Anywhere))
+            })
+            .unwrap_or(false);
+
+        // If the text is wider than available width and we can break words,
+        // clamp its width to the remaining space on the current line.
+        if can_break_word && child_width > available_width && cursor_x == 0.0 {
+            child_width = available_width;
+        }
+
         // Word wrap: if adding this item would exceed the line, start a new line.
         if allow_wrap && cursor_x + child_width > available_width && cursor_x > 0.0 {
             // Finalize current line.

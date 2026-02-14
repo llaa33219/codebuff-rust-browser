@@ -1942,16 +1942,152 @@ pub fn apply_declaration(
             }
         }
 
-        // Silently accept properties we don't render yet.
+        "transform" => {
+            if matches!(decl.value.first(), Some(CssValue::None))
+                || matches!(decl.value.first(), Some(CssValue::Keyword(k)) if k == "none")
+            {
+                style.transform.clear();
+            } else {
+                let mut transforms = Vec::new();
+                for v in &decl.value {
+                    if let CssValue::Function { name, args } = v {
+                        let lower = name.to_ascii_lowercase();
+                        let nums: Vec<f32> = args.iter().filter_map(|a| match a {
+                            CssValue::Length(val, unit) => Some(resolve_length(*val, unit, style.font_size_px)),
+                            CssValue::Number(n) => Some(*n as f32),
+                            CssValue::Percentage(p) => Some(*p as f32),
+                            _ => None,
+                        }).collect();
+                        match lower.as_str() {
+                            "translate" => {
+                                if nums.len() >= 2 { transforms.push(TransformFunction::Translate(nums[0], nums[1])); }
+                                else if nums.len() == 1 { transforms.push(TransformFunction::Translate(nums[0], 0.0)); }
+                            }
+                            "translatex" => if !nums.is_empty() { transforms.push(TransformFunction::TranslateX(nums[0])); },
+                            "translatey" => if !nums.is_empty() { transforms.push(TransformFunction::TranslateY(nums[0])); },
+                            "translate3d" => if nums.len() >= 2 { transforms.push(TransformFunction::Translate(nums[0], nums[1])); },
+                            "scale" => {
+                                if nums.len() >= 2 { transforms.push(TransformFunction::Scale(nums[0], nums[1])); }
+                                else if nums.len() == 1 { transforms.push(TransformFunction::Scale(nums[0], nums[0])); }
+                            }
+                            "scalex" => if !nums.is_empty() { transforms.push(TransformFunction::ScaleX(nums[0])); },
+                            "scaley" => if !nums.is_empty() { transforms.push(TransformFunction::ScaleY(nums[0])); },
+                            "scale3d" => if nums.len() >= 2 { transforms.push(TransformFunction::Scale(nums[0], nums[1])); },
+                            "rotate" => if !nums.is_empty() { transforms.push(TransformFunction::Rotate(nums[0])); },
+                            "skewx" => if !nums.is_empty() { transforms.push(TransformFunction::SkewX(nums[0])); },
+                            "skewy" => if !nums.is_empty() { transforms.push(TransformFunction::SkewY(nums[0])); },
+                            "matrix" => if nums.len() >= 6 { transforms.push(TransformFunction::Matrix(nums[0], nums[1], nums[2], nums[3], nums[4], nums[5])); },
+                            _ => {}
+                        }
+                    }
+                }
+                if !transforms.is_empty() { style.transform = transforms; }
+            }
+        }
+
+        "transform-origin" => {
+            let mut x_set = false;
+            for v in &decl.value {
+                match v {
+                    CssValue::Length(val, unit) => {
+                        let px = resolve_length(*val, unit, style.font_size_px);
+                        if !x_set { style.transform_origin_x = px; x_set = true; }
+                        else { style.transform_origin_y = px; }
+                    }
+                    CssValue::Percentage(p) => {
+                        if !x_set { style.transform_origin_x = *p as f32; x_set = true; }
+                        else { style.transform_origin_y = *p as f32; }
+                    }
+                    CssValue::Keyword(kw) => match kw.as_str() {
+                        "left" => { style.transform_origin_x = 0.0; x_set = true; }
+                        "right" => { style.transform_origin_x = 100.0; x_set = true; }
+                        "center" => {
+                            if !x_set { style.transform_origin_x = 50.0; x_set = true; }
+                            else { style.transform_origin_y = 50.0; }
+                        }
+                        "top" => { style.transform_origin_y = 0.0; }
+                        "bottom" => { style.transform_origin_y = 100.0; }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+        }
+        "transform-style" | "perspective" | "perspective-origin" => {}
+
+        "filter" => {
+            if matches!(decl.value.first(), Some(CssValue::None))
+                || matches!(decl.value.first(), Some(CssValue::Keyword(k)) if k == "none")
+            {
+                style.filter.clear();
+            } else {
+                style.filter = parse_filter_list(&decl.value, style.font_size_px, style.color);
+            }
+        }
+        "backdrop-filter" => {
+            if matches!(decl.value.first(), Some(CssValue::None))
+                || matches!(decl.value.first(), Some(CssValue::Keyword(k)) if k == "none")
+            {
+                style.backdrop_filter.clear();
+            } else {
+                style.backdrop_filter = parse_filter_list(&decl.value, style.font_size_px, style.color);
+            }
+        }
+
+        "column-count" => {
+            if matches!(decl.value.first(), Some(CssValue::Auto)) {
+                style.column_count = None;
+            } else if let Some(n) = first_number(&decl.value) {
+                style.column_count = Some(n.max(1.0) as u32);
+            }
+        }
+        "column-width" => {
+            if matches!(decl.value.first(), Some(CssValue::Auto)) {
+                style.column_width = None;
+            } else if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+                style.column_width = Some(v);
+            }
+        }
+        "columns" => {
+            for v in &decl.value {
+                match v {
+                    CssValue::Auto => {}
+                    CssValue::Number(n) => style.column_count = Some((*n as u32).max(1)),
+                    CssValue::Length(val, unit) => style.column_width = Some(resolve_length(*val, unit, style.font_size_px)),
+                    _ => {}
+                }
+            }
+        }
+        "column-rule" => {}
+
+        "will-change" => {
+            style.will_change = !matches!(decl.value.first(), Some(CssValue::Auto));
+        }
+        "contain" => {
+            if matches!(decl.value.first(), Some(CssValue::None))
+                || matches!(decl.value.first(), Some(CssValue::Keyword(k)) if k == "none")
+            {
+                style.contain_layout = false;
+                style.contain_paint = false;
+            } else {
+                for v in &decl.value {
+                    if let CssValue::Keyword(k) = v {
+                        match k.as_str() {
+                            "layout" | "strict" | "content" => style.contain_layout = true,
+                            "paint" => style.contain_paint = true,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        // Silently accept properties we can't implement yet.
         "transition" | "transition-property" | "transition-duration"
         | "transition-timing-function" | "transition-delay"
         | "animation" | "animation-name" | "animation-duration"
         | "animation-timing-function" | "animation-delay" | "animation-iteration-count"
         | "animation-direction" | "animation-fill-mode" | "animation-play-state"
-        | "transform" | "transform-origin" | "transform-style"
-        | "perspective" | "perspective-origin"
-        | "will-change" | "contain"
-        | "filter" | "backdrop-filter"
         | "mix-blend-mode" | "isolation"
         | "clip" | "clip-path" | "mask" | "mask-image"
         | "scroll-behavior" | "scroll-snap-type" | "scroll-snap-align"
@@ -1960,7 +2096,6 @@ pub fn apply_declaration(
         | "accent-color" | "caret-color" | "color-scheme"
         | "forced-color-adjust" | "print-color-adjust"
         | "page" | "orphans" | "widows"
-        | "column-count" | "column-width" | "columns" | "column-rule"
         | "all" => {}
 
         _ => {
@@ -2110,6 +2245,14 @@ fn apply_initial(style: &mut ComputedStyle, prop: &str) {
         "outline-offset" => style.outline_offset = def.outline_offset,
         "aspect-ratio" => style.aspect_ratio = def.aspect_ratio,
         "content" => style.content = def.content.clone(),
+        "transform" => style.transform = def.transform.clone(),
+        "transform-origin" => { style.transform_origin_x = def.transform_origin_x; style.transform_origin_y = def.transform_origin_y; }
+        "filter" => style.filter = def.filter.clone(),
+        "backdrop-filter" => style.backdrop_filter = def.backdrop_filter.clone(),
+        "column-count" => style.column_count = def.column_count,
+        "column-width" => style.column_width = def.column_width,
+        "will-change" => style.will_change = def.will_change,
+        "contain" => { style.contain_layout = def.contain_layout; style.contain_paint = def.contain_paint; }
         _ => {}
     }
 }
@@ -2570,6 +2713,53 @@ fn parse_linear_gradient_args(args: &[CssValue], current_color: Color) -> Option
     }).collect();
 
     Some((angle_deg, stops))
+}
+
+fn parse_filter_list(values: &[CssValue], font_size: f32, current_color: Color) -> Vec<FilterFunction> {
+    let mut filters = Vec::new();
+    for v in values {
+        if let CssValue::Function { name, args } = v {
+            let lower = name.to_ascii_lowercase();
+            let nums: Vec<f32> = args.iter().filter_map(|a| match a {
+                CssValue::Length(val, unit) => Some(resolve_length(*val, unit, font_size)),
+                CssValue::Number(n) => Some(*n as f32),
+                CssValue::Percentage(p) => Some(*p as f32 / 100.0),
+                _ => None,
+            }).collect();
+            match lower.as_str() {
+                "opacity" => if !nums.is_empty() { filters.push(FilterFunction::Opacity(nums[0].clamp(0.0, 1.0))); },
+                "blur" => if !nums.is_empty() { filters.push(FilterFunction::Blur(nums[0])); },
+                "brightness" => if !nums.is_empty() { filters.push(FilterFunction::Brightness(nums[0])); },
+                "contrast" => if !nums.is_empty() { filters.push(FilterFunction::Contrast(nums[0])); },
+                "grayscale" => if !nums.is_empty() { filters.push(FilterFunction::Grayscale(nums[0].clamp(0.0, 1.0))); },
+                "saturate" => if !nums.is_empty() { filters.push(FilterFunction::Saturate(nums[0])); },
+                "invert" => if !nums.is_empty() { filters.push(FilterFunction::Invert(nums[0].clamp(0.0, 1.0))); },
+                "sepia" => if !nums.is_empty() { filters.push(FilterFunction::Sepia(nums[0].clamp(0.0, 1.0))); },
+                "hue-rotate" => if !nums.is_empty() { filters.push(FilterFunction::HueRotate(nums[0])); },
+                "drop-shadow" => {
+                    let mut lengths = Vec::new();
+                    let mut color = None;
+                    for a in args {
+                        match a {
+                            CssValue::Length(val, unit) => lengths.push(resolve_length(*val, unit, font_size)),
+                            CssValue::Number(n) if *n == 0.0 => lengths.push(0.0),
+                            CssValue::Color(c) => color = Some(css_color_to_color(c)),
+                            _ => {}
+                        }
+                    }
+                    if lengths.len() >= 2 {
+                        filters.push(FilterFunction::DropShadow(
+                            lengths[0], lengths[1],
+                            lengths.get(2).copied().unwrap_or(0.0),
+                            color.unwrap_or(current_color),
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    filters
 }
 
 fn apply_border_side_shorthand(values: &[CssValue], side: &mut BorderSide, parent_font_size: f32, current_color: Color) {
