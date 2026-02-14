@@ -45,6 +45,15 @@ pub fn layout_inline_content(
     let mut cursor_x = 0.0f32;
     let mut cursor_y = 0.0f32;
 
+    // Apply text-indent to the first line.
+    let text_indent = children.first()
+        .and_then(|&id| tree.get(id))
+        .map(|b| b.computed_style.text_indent)
+        .unwrap_or(0.0);
+    if text_indent.abs() > 0.001 {
+        cursor_x = text_indent;
+    }
+
     // Detect vertical writing mode and delegate.
     let is_vertical = children.first()
         .and_then(|&id| tree.get(id))
@@ -240,6 +249,8 @@ fn measure_inline_box(tree: &LayoutTree, box_id: LayoutBoxId, _available_width: 
         LayoutBoxKind::TextRun => {
             let text = b.text.as_deref().unwrap_or("");
             let avg_char_width = font_size * 0.6;
+            let letter_sp = b.computed_style.letter_spacing;
+            let word_sp = b.computed_style.word_spacing;
 
             // Vertical writing mode: each character stacks vertically.
             let is_vertical = matches!(
@@ -248,7 +259,7 @@ fn measure_inline_box(tree: &LayoutTree, box_id: LayoutBoxId, _available_width: 
             );
             if is_vertical {
                 let char_count = text.chars().count() as f32;
-                return (font_size, char_count * line_height);
+                return (font_size, char_count * (line_height + letter_sp));
             }
 
             let tab_width = b.computed_style.tab_size * avg_char_width;
@@ -256,8 +267,10 @@ fn measure_inline_box(tree: &LayoutTree, box_id: LayoutBoxId, _available_width: 
             for ch in text.chars() {
                 if ch == '\t' {
                     width += tab_width;
+                } else if ch == ' ' {
+                    width += avg_char_width + word_sp + letter_sp;
                 } else {
-                    width += avg_char_width;
+                    width += avg_char_width + letter_sp;
                 }
             }
             (width, line_height)

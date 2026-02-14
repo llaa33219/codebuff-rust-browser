@@ -114,6 +114,16 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
         None => content_width,
     };
 
+    // Auto-compute column count from column-width if column-count is not set.
+    let column_count = if column_count == 0 {
+        tree.get(box_id)
+            .and_then(|b| b.computed_style.column_width)
+            .and_then(|cw| if cw > 0.0 { Some(((content_width + column_gap) / (cw + column_gap)).floor().max(1.0) as u32) } else { None })
+            .unwrap_or(0)
+    } else {
+        column_count
+    };
+
     // Collect children for layout.
     let children = tree.children(box_id);
 
@@ -215,6 +225,11 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
             }
             content_height = content_height.max(h);
         }
+    }
+
+    let contain_layout_flag = tree.get(box_id).map(|b| b.computed_style.contain_layout).unwrap_or(false);
+    if contain_layout_flag && specified_height.is_none() {
+        content_height = 0.0;
     }
 
     let final_height = match specified_height {

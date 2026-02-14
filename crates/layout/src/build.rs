@@ -62,9 +62,19 @@ fn build_box(
             let kind = display_to_kind(style.display);
             let box_id = tree.alloc(LayoutBox::new(Some(node_id), kind, style.clone()));
 
+            // Generate ::before pseudo-element from CSS content property.
+            let mut before_boxes: Vec<LayoutBoxId> = Vec::new();
+            if let Some(ref text) = style.content {
+                if !text.is_empty() {
+                    let mut ps = style.clone();
+                    ps.content = None;
+                    before_boxes.push(tree.alloc(LayoutBox::text_run(node_id, text.clone(), ps)));
+                }
+            }
+
             // Recursively build children.
             let child_ids = dom.children(node_id);
-            let mut child_boxes: Vec<LayoutBoxId> = Vec::new();
+            let mut child_boxes: Vec<LayoutBoxId> = before_boxes;
 
             for child_node_id in child_ids {
                 if let Some(child_box_id) = build_box(dom, child_node_id, styles, tree) {

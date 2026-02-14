@@ -400,17 +400,26 @@ fn paint_background(layout_box: &LayoutBox, list: &mut DisplayList) {
             style::BackgroundSize::Explicit(w, h) => (w, h),
             _ => (border_box.w, border_box.h),
         };
-        let grad_rect = Rect::new(
-            border_box.x + offset_x,
-            border_box.y + offset_y,
-            grad_w,
-            grad_h,
-        );
-        list.push(DisplayItem::LinearGradient {
-            rect: grad_rect,
-            angle_deg,
-            stops: grad_stops,
-        });
+
+        let repeat_x = !matches!(style.background_repeat, style::BackgroundRepeat::NoRepeat | style::BackgroundRepeat::RepeatY);
+        let repeat_y = !matches!(style.background_repeat, style::BackgroundRepeat::NoRepeat | style::BackgroundRepeat::RepeatX);
+        let nx = if repeat_x && grad_w > 0.0 && grad_w < border_box.w { ((border_box.w / grad_w).ceil() as i32 + 1).min(10) } else { 1 };
+        let ny = if repeat_y && grad_h > 0.0 && grad_h < border_box.h { ((border_box.h / grad_h).ceil() as i32 + 1).min(10) } else { 1 };
+
+        for iy in 0..ny {
+            for ix in 0..nx {
+                list.push(DisplayItem::LinearGradient {
+                    rect: Rect::new(
+                        border_box.x + offset_x + ix as f32 * grad_w,
+                        border_box.y + offset_y + iy as f32 * grad_h,
+                        grad_w,
+                        grad_h,
+                    ),
+                    angle_deg,
+                    stops: grad_stops.clone(),
+                });
+            }
+        }
     }
 }
 
@@ -496,13 +505,18 @@ fn paint_text(layout_box: &LayoutBox, list: &mut DisplayList) {
         }
         x_offset = font_size;
     } else {
+        let extra_letter = style.letter_spacing;
+        let extra_word = style.word_spacing;
         for ch in text.chars() {
             glyphs.push(PositionedGlyph {
                 glyph_id: ch as u16,
                 x: content_box.x + x_offset,
                 y: content_box.y + y_offset,
             });
-            x_offset += avg_char_width;
+            x_offset += avg_char_width + extra_letter;
+            if ch == ' ' {
+                x_offset += extra_word;
+            }
         }
     }
 
@@ -606,12 +620,13 @@ fn paint_list_marker(layout_box: &LayoutBox, list: &mut DisplayList) {
     let r = font_size * 0.15;
     let cx = marker_x + font_size * 0.3;
     let cy = content_box.y + font_size * 0.55;
+    let marker_color = style.accent_color.unwrap_or(style.color);
 
     match style.list_style_type {
         style::ListStyleType::Disc => {
             list.push(DisplayItem::SolidRect {
                 rect: Rect::new(cx - r, cy - r, r * 2.0, r * 2.0),
-                color: style.color,
+                color: marker_color,
             });
         }
         style::ListStyleType::Circle => {
@@ -619,20 +634,20 @@ fn paint_list_marker(layout_box: &LayoutBox, list: &mut DisplayList) {
             list.push(DisplayItem::Border {
                 rect: Rect::new(cx - r, cy - r, r * 2.0, r * 2.0),
                 widths: [thickness; 4],
-                colors: [style.color; 4],
+                colors: [marker_color; 4],
                 styles: [style::BorderStyle::Solid; 4],
             });
         }
         style::ListStyleType::Square => {
             list.push(DisplayItem::SolidRect {
                 rect: Rect::new(cx - r, cy - r, r * 2.0, r * 2.0),
-                color: style.color,
+                color: marker_color,
             });
         }
         style::ListStyleType::Decimal => {
             list.push(DisplayItem::SolidRect {
                 rect: Rect::new(cx - r, cy - r, r * 2.0, r * 2.0),
-                color: style.color,
+                color: marker_color,
             });
         }
         style::ListStyleType::None => {}
@@ -755,6 +770,7 @@ mod tests {
         let style = ComputedStyle {
             display: Display::Block,
             background_color: color,
+            list_style_type: style::ListStyleType::None,
             ..ComputedStyle::default()
         };
         let mut b = LayoutBox::new(None, LayoutBoxKind::Block, style);
@@ -901,11 +917,13 @@ mod tests {
         let parent_style = ComputedStyle {
             display: Display::Block,
             background_color: Color::WHITE,
+            list_style_type: style::ListStyleType::None,
             ..ComputedStyle::default()
         };
         let child_style = ComputedStyle {
             display: Display::Block,
             background_color: Color::RED,
+            list_style_type: style::ListStyleType::None,
             ..ComputedStyle::default()
         };
 
