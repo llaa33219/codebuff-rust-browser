@@ -52,9 +52,45 @@ fn parse_rules(tokens: &[CssToken]) -> Vec<CssRule> {
             break;
         }
 
-        // Skip at-rules for now (e.g. @media, @import)
-        if let CssToken::AtKeyword(_) = &tokens[pos] {
-            pos = skip_at_rule(tokens, pos);
+        // Handle at-rules: parse @media/@supports content, skip others.
+        if let CssToken::AtKeyword(name) = &tokens[pos] {
+            let lower_name = name.to_ascii_lowercase();
+            match lower_name.as_str() {
+                "media" | "supports" | "document" | "-moz-document" | "layer" | "container" => {
+                    pos += 1; // skip @keyword
+                    // Skip the condition/query part until '{'
+                    while pos < tokens.len() && tokens[pos] != CssToken::LBrace {
+                        pos += 1;
+                    }
+                    if pos < tokens.len() {
+                        pos += 1; // skip '{'
+                        // Find the matching '}' accounting for nested blocks
+                        let block_start = pos;
+                        let mut depth = 1;
+                        while pos < tokens.len() && depth > 0 {
+                            match &tokens[pos] {
+                                CssToken::LBrace => depth += 1,
+                                CssToken::RBrace => depth -= 1,
+                                _ => {}
+                            }
+                            if depth > 0 {
+                                pos += 1;
+                            }
+                        }
+                        let block_tokens = &tokens[block_start..pos];
+                        // Recursively parse rules inside the block
+                        let inner_rules = parse_rules(block_tokens);
+                        rules.extend(inner_rules);
+                        if pos < tokens.len() {
+                            pos += 1; // skip closing '}'
+                        }
+                    }
+                }
+                _ => {
+                    // For @import, @charset, @namespace, @keyframes, @font-face, etc.
+                    pos = skip_at_rule(tokens, pos);
+                }
+            }
             continue;
         }
 
@@ -563,6 +599,50 @@ mod tests {
         assert_eq!(
             stylesheet.rules[0].selectors[0].parts[0].0.simples,
             vec![SimpleSelector::Type("body".into())]
+        );
+    }
+
+    #[test]
+    fn test_parse_media_rule() {
+        let css = r#"
+            @media screen {
+                body { color: blue; }
+                p { font-size: 14px; }
+            }
+        "#;
+        let stylesheet = parse_stylesheet(css);
+        assert_eq!(stylesheet.rules.len(), 2);
+        assert_eq!(stylesheet.rules[0].declarations[0].name, "color");
+        assert_eq!(stylesheet.rules[1].declarations[0].name, "font-size");
+    }
+
+    #[test]
+    fn test_parse_media_rule_with_outer_rules() {
+        let css = r#"
+            h1 { color: red; }
+            @media (min-width: 768px) {
+                h1 { color: green; }
+            }
+            p { margin: 10px; }
+        "#;
+        let stylesheet = parse_stylesheet(css);
+        assert_eq!(stylesheet.rules.len(), 3);
+    }
+
+    #[test]
+    fn test_parse_nested_media_rules() {
+        let css = r#"
+            @media screen {
+                @media (min-width: 0) {
+                    div { color: red; }
+                }
+            }
+        "#;
+        let stylesheet = parse_stylesheet(css);
+        assert_eq!(stylesheet.rules.len(), 1);
+        assert_eq!(
+            stylesheet.rules[0].selectors[0].parts[0].0.simples,
+            vec![SimpleSelector::Type("div".into())]
         );
     }
 

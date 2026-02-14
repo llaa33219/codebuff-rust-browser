@@ -329,6 +329,79 @@ pub fn parse_rgb_function(name: &str, tokens: &[crate::token::CssToken]) -> Opti
     Some(CssColor::new(r, g, b, a))
 }
 
+/// Parse an `hsl(h, s%, l%)` or `hsla(h, s%, l%, a)` function call from tokens.
+pub fn parse_hsl_function(name: &str, tokens: &[crate::token::CssToken]) -> Option<CssColor> {
+    use crate::token::CssToken;
+
+    let lower = name.to_ascii_lowercase();
+    if lower != "hsl" && lower != "hsla" {
+        return None;
+    }
+
+    let mut numbers: Vec<f64> = Vec::new();
+
+    for token in tokens {
+        match token {
+            CssToken::Number { value, .. } => numbers.push(*value),
+            CssToken::Percentage(value) => numbers.push(*value),
+            CssToken::Dimension { value, unit } if unit.eq_ignore_ascii_case("deg") => numbers.push(*value),
+            CssToken::Whitespace | CssToken::Comma => {}
+            CssToken::Delim('/') => {}
+            _ => {}
+        }
+    }
+
+    if numbers.len() < 3 {
+        return None;
+    }
+
+    let h = ((numbers[0] % 360.0) + 360.0) % 360.0;
+    let s = (numbers[1] / 100.0).clamp(0.0, 1.0);
+    let l = (numbers[2] / 100.0).clamp(0.0, 1.0);
+
+    let (r, g, b) = hsl_to_rgb(h, s, l);
+
+    let a = if numbers.len() >= 4 {
+        let alpha = numbers[3];
+        if alpha <= 1.0 {
+            (alpha * 255.0).round().clamp(0.0, 255.0) as u8
+        } else {
+            alpha.round().clamp(0.0, 255.0) as u8
+        }
+    } else {
+        255
+    };
+
+    Some(CssColor::new(r, g, b, a))
+}
+
+fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
+    if s == 0.0 {
+        let v = (l * 255.0).round().clamp(0.0, 255.0) as u8;
+        return (v, v, v);
+    }
+    let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+    let p = 2.0 * l - q;
+    let h_norm = h / 360.0;
+    let r = hue_to_rgb(p, q, h_norm + 1.0 / 3.0);
+    let g = hue_to_rgb(p, q, h_norm);
+    let b = hue_to_rgb(p, q, h_norm - 1.0 / 3.0);
+    (
+        (r * 255.0).round().clamp(0.0, 255.0) as u8,
+        (g * 255.0).round().clamp(0.0, 255.0) as u8,
+        (b * 255.0).round().clamp(0.0, 255.0) as u8,
+    )
+}
+
+fn hue_to_rgb(p: f64, q: f64, mut t: f64) -> f64 {
+    if t < 0.0 { t += 1.0; }
+    if t > 1.0 { t -= 1.0; }
+    if t < 1.0 / 6.0 { return p + (q - p) * 6.0 * t; }
+    if t < 1.0 / 2.0 { return q; }
+    if t < 2.0 / 3.0 { return p + (q - p) * (2.0 / 3.0 - t) * 6.0; }
+    p
+}
+
 /// Parse a CSS value token sequence into a `CssValue`.
 /// This handles common cases: lengths, percentages, colors, keywords, etc.
 pub fn parse_value_from_tokens(tokens: &[crate::token::CssToken]) -> Vec<CssValue> {
@@ -405,6 +478,14 @@ pub fn parse_value_from_tokens(tokens: &[crate::token::CssToken]) -> Vec<CssValu
                 let lower_name = func_name.to_ascii_lowercase();
                 if lower_name == "rgb" || lower_name == "rgba" {
                     if let Some(color) = parse_rgb_function(&func_name, func_tokens) {
+                        values.push(CssValue::Color(color));
+                        continue;
+                    }
+                }
+
+                // Try to parse as hsl/hsla color
+                if lower_name == "hsl" || lower_name == "hsla" {
+                    if let Some(color) = parse_hsl_function(&func_name, func_tokens) {
                         values.push(CssValue::Color(color));
                         continue;
                     }
@@ -663,6 +744,41 @@ mod tests {
         let values = parse_value_from_tokens(&tokens);
         assert_eq!(values.len(), 1);
         assert_eq!(values[0], CssValue::Percentage(50.0));
+    }
+
+    #[test]
+    fn test_hsl_basic() {
+        assert_eq!(
+            hsl_to_rgb(0.0, 1.0, 0.5),
+            (255, 0, 0) // red
+        );
+        assert_eq!(
+            hsl_to_rgb(120.0, 1.0, 0.5),
+            (0, 255, 0) // green
+        );
+        assert_eq!(
+            hsl_to_rgb(240.0, 1.0, 0.5),
+            (0, 0, 255) // blue
+        );
+    }
+
+    #[test]
+    fn test_hsl_greyscale() {
+        let (r, g, b) = hsl_to_rgb(0.0, 0.0, 0.5);
+        assert_eq!(r, g);
+        assert_eq!(g, b);
+        assert_eq!(r, 128);
+    }
+
+    #[test]
+    fn test_parse_hsl_in_value() {
+        use crate::token::CssTokenizer;
+
+        let mut t = CssTokenizer::new("hsl(0, 100%, 50%)");
+        let tokens = t.tokenize_all();
+        let values = parse_value_from_tokens(&tokens);
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0], CssValue::Color(CssColor::rgb(255, 0, 0)));
     }
 
     #[test]
