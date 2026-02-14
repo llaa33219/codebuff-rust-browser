@@ -7,10 +7,9 @@
 //! 4. Position items along the main axis (justify-content).
 //! 5. Determine cross sizes and align (align-items).
 
-use common::Rect;
 use style::{FlexDirection, JustifyContent, AlignItems};
 use crate::tree::{LayoutBoxId, LayoutTree};
-use crate::geometry::compute_box_model;
+use crate::block::layout_block;
 
 /// A flex item with its resolved sizes.
 struct FlexItem {
@@ -44,7 +43,7 @@ pub fn layout_flex(tree: &mut LayoutTree, container_id: LayoutBoxId, available_w
     let mut items: Vec<FlexItem> = Vec::with_capacity(children.len());
 
     for &child_id in &children {
-        let (basis, grow, shrink, specified_w, specified_h, line_height) = {
+        let (basis, grow, shrink) = {
             let b = match tree.get(child_id) {
                 Some(b) => b,
                 None => continue,
@@ -57,17 +56,8 @@ pub fn layout_flex(tree: &mut LayoutTree, container_id: LayoutBoxId, available_w
                     s.height.unwrap_or(s.line_height_px)
                 }
             });
-            (
-                basis,
-                s.flex.grow,
-                s.flex.shrink,
-                s.width.unwrap_or(0.0),
-                s.height.unwrap_or(s.line_height_px),
-                s.line_height_px,
-            )
+            (basis, s.flex.grow, s.flex.shrink)
         };
-
-        let cross_size = if is_row { specified_h.max(line_height) } else { specified_w };
 
         items.push(FlexItem {
             box_id: child_id,
@@ -75,7 +65,7 @@ pub fn layout_flex(tree: &mut LayoutTree, container_id: LayoutBoxId, available_w
             grow,
             shrink,
             main_size: basis,
-            cross_size,
+            cross_size: 0.0,
         });
     }
 
@@ -106,7 +96,32 @@ pub fn layout_flex(tree: &mut LayoutTree, container_id: LayoutBoxId, available_w
         }
     }
 
-    // Step 4: Position items along main axis (justify-content).
+    // Step 4: Recursively layout each item's children and determine cross sizes.
+    for item in &mut items {
+        // For column direction, set the item's height to the flex-allocated main
+        // size so layout_block uses it (otherwise items with no explicit height
+        // would collapse to 0).
+        if !is_row {
+            if let Some(b) = tree.get_mut(item.box_id) {
+                if b.computed_style.height.is_none() {
+                    b.computed_style.height = Some(item.main_size);
+                }
+            }
+        }
+
+        let item_available = if is_row { item.main_size } else { available_width };
+        layout_block(tree, item.box_id, item_available);
+
+        if let Some(b) = tree.get(item.box_id) {
+            if is_row {
+                item.cross_size = b.box_model.border_box.h.max(b.computed_style.line_height_px);
+            } else {
+                item.cross_size = b.box_model.border_box.w;
+            }
+        }
+    }
+
+    // Step 5: Position items along main axis (justify-content).
     let total_main: f32 = items.iter().map(|i| i.main_size).sum();
     let remaining = (container_main_size - total_main).max(0.0);
     let item_count = items.len();
@@ -136,53 +151,78 @@ pub fn layout_flex(tree: &mut LayoutTree, container_id: LayoutBoxId, available_w
         items.reverse();
     }
 
-    // Step 5: Determine cross size of the container.
+    // Step 6: Determine cross size of the container.
     let container_cross = items.iter().map(|i| i.cross_size).fold(0.0f32, f32::max);
 
-    // Position each item.
+    // Step 7: Position each item by shifting the box_model produced by layout_block.
+    let mut total_main_used = 0.0f32;
     for item in &items {
-        let (main_pos, _cross_pos) = (offset, 0.0f32);
-
-        // Align item on cross axis.
         let aligned_cross = match align_items {
             AlignItems::FlexStart => 0.0,
             AlignItems::FlexEnd => container_cross - item.cross_size,
             AlignItems::Center => (container_cross - item.cross_size) / 2.0,
-            AlignItems::Stretch => 0.0, // item cross_size stretched below
-            AlignItems::Baseline => 0.0, // simplified
+            AlignItems::Stretch => 0.0,
+            AlignItems::Baseline => 0.0,
         };
 
-        let item_cross_size = if align_items == AlignItems::Stretch {
-            container_cross
+        let (target_x, target_y) = if is_row {
+            (offset, aligned_cross)
         } else {
-            item.cross_size
+            (aligned_cross, offset)
         };
 
-        let (x, y, w, h) = if is_row {
-            (main_pos, aligned_cross, item.main_size, item_cross_size)
+        let advance = if let Some(b) = tree.get_mut(item.box_id) {
+            let dx = target_x - b.box_model.margin_box.x;
+            let dy = target_y - b.box_model.margin_box.y;
+            b.box_model.content_box.x += dx;
+            b.box_model.content_box.y += dy;
+            b.box_model.padding_box.x += dx;
+            b.box_model.padding_box.y += dy;
+            b.box_model.border_box.x += dx;
+            b.box_model.border_box.y += dy;
+            b.box_model.margin_box.x += dx;
+            b.box_model.margin_box.y += dy;
+
+            // For stretch, expand to fill the cross axis.
+            if align_items == AlignItems::Stretch {
+                if is_row {
+                    let dh = container_cross - b.box_model.border_box.h;
+                    if dh > 0.0 {
+                        b.box_model.content_box.h += dh;
+                        b.box_model.padding_box.h += dh;
+                        b.box_model.border_box.h += dh;
+                        b.box_model.margin_box.h += dh;
+                    }
+                } else {
+                    let dw = container_cross - b.box_model.border_box.w;
+                    if dw > 0.0 {
+                        b.box_model.content_box.w += dw;
+                        b.box_model.padding_box.w += dw;
+                        b.box_model.border_box.w += dw;
+                        b.box_model.margin_box.w += dw;
+                    }
+                }
+            }
+
+            // Use actual laid-out size for offset (important for column direction
+            // where content may be taller than flex basis).
+            if is_row {
+                b.box_model.margin_box.w
+            } else {
+                b.box_model.margin_box.h
+            }
         } else {
-            (aligned_cross, main_pos, item_cross_size, item.main_size)
+            item.main_size
         };
 
-        let content_rect = Rect::new(x, y, w, h);
-        let bm = compute_box_model(
-            content_rect,
-            &common::Edges::zero(),
-            &common::Edges::zero(),
-            &common::Edges::zero(),
-        );
-
-        if let Some(b) = tree.get_mut(item.box_id) {
-            b.box_model = bm;
-        }
-
-        offset += item.main_size + gap;
+        offset += advance + gap;
+        total_main_used += advance + gap;
     }
 
     if is_row {
         container_cross
     } else {
-        offset - gap // total height for column direction
+        (total_main_used - gap).max(0.0)
     }
 }
 

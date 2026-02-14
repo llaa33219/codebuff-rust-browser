@@ -1185,6 +1185,7 @@ fn build_style_map(
                             }
                             let resolved_values = style::resolve_css_values(&decl.value, &ctx);
                             let resolved_values = style::resolve_property_percentages(&decl.name, &resolved_values, &ctx);
+                            let resolved_values = style::resolve_remaining_calcs(&resolved_values, &ctx);
                             let resolved_decl = css::Declaration {
                                 name: decl.name.clone(),
                                 value: resolved_values,

@@ -10,7 +10,9 @@ pub mod matching;
 
 pub use computed::*;
 pub use cascade::{
-    StyleOrigin, ResolveContext, MatchedRule, collect_matching_rules, resolve_style,
+    MatchedRule, StyleOrigin, ResolveContext,
+    collect_matching_rules, resolve_style,
     apply_declaration, resolve_css_values, resolve_property_percentages,
+    resolve_remaining_calcs,
 };
 pub use matching::{matches_selector, matches_compound, matches_simple};

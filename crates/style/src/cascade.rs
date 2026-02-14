@@ -97,11 +97,15 @@ pub fn resolve_css_values(values: &[CssValue], ctx: &ResolveContext) -> Vec<CssV
                         result.extend(resolve_css_values(&fallback, ctx));
                     }
                 } else if lower == "calc" || lower == "-webkit-calc" {
-                    if let Some(px) = eval_simple_calc(args, ctx) {
-                        result.push(CssValue::Length(px as f64, LengthUnit::Px));
-                    } else {
-                        result.push(v.clone());
-                    }
+                    // Keep calc() as a Function with resolved inner args
+                    // (var/viewport resolved). Actual evaluation happens later
+                    // in resolve_property_percentages / resolve_remaining_calcs
+                    // so that percentages can be resolved against the correct base.
+                    let resolved_args = resolve_css_values(args, ctx);
+                    result.push(CssValue::Function {
+                        name: name.clone(),
+                        args: resolved_args,
+                    });
                 } else {
                     // Other functions (rgb, etc.) — keep as-is
                     result.push(v.clone());
@@ -132,7 +136,7 @@ pub fn resolve_css_values(values: &[CssValue], ctx: &ResolveContext) -> Vec<CssV
     result
 }
 
-fn eval_simple_calc(args: &[CssValue], ctx: &ResolveContext) -> Option<f32> {
+fn eval_simple_calc(args: &[CssValue], ctx: &ResolveContext, percent_base: f32) -> Option<f32> {
     let resolved = resolve_css_values(args, ctx);
     if resolved.is_empty() {
         return None;
@@ -140,6 +144,18 @@ fn eval_simple_calc(args: &[CssValue], ctx: &ResolveContext) -> Option<f32> {
     let mut total: f32 = 0.0;
     let mut op = '+';
     for arg in &resolved {
+        // Detect arithmetic operator keywords (+, -, *, /) produced by the
+        // CSS tokenizer for delimiter characters inside calc().
+        if let CssValue::Keyword(k) = arg {
+            match k.as_str() {
+                "+" => { op = '+'; }
+                "-" => { op = '-'; }
+                "*" => { op = '*'; }
+                "/" => { op = '/'; }
+                _ => {}
+            }
+            continue;
+        }
         let val = match arg {
             CssValue::Length(v, unit) => Some(match unit {
                 LengthUnit::Px => *v as f32,
@@ -148,7 +164,7 @@ fn eval_simple_calc(args: &[CssValue], ctx: &ResolveContext) -> Option<f32> {
                 _ => *v as f32,
             }),
             CssValue::Number(n) => Some(*n as f32),
-            CssValue::Percentage(p) => Some(*p as f32),
+            CssValue::Percentage(p) => Some((*p as f32 / 100.0) * percent_base),
             _ => None,
         };
         if let Some(v) = val {
@@ -193,6 +209,38 @@ pub fn resolve_property_percentages(
         .map(|v| match v {
             CssValue::Percentage(p) => {
                 CssValue::Length((*p / 100.0) * percent_base as f64, LengthUnit::Px)
+            }
+            CssValue::Function { name, args }
+                if name.eq_ignore_ascii_case("calc")
+                    || name.eq_ignore_ascii_case("-webkit-calc") =>
+            {
+                if let Some(px) = eval_simple_calc(args, ctx, percent_base) {
+                    CssValue::Length(px as f64, LengthUnit::Px)
+                } else {
+                    v.clone()
+                }
+            }
+            _ => v.clone(),
+        })
+        .collect()
+}
+
+/// Evaluate any remaining `calc()` functions that were not resolved by
+/// `resolve_property_percentages` (i.e. for properties without a known
+/// percentage base).  Uses `viewport_width` as the fallback percent base.
+pub fn resolve_remaining_calcs(values: &[CssValue], ctx: &ResolveContext) -> Vec<CssValue> {
+    values
+        .iter()
+        .map(|v| match v {
+            CssValue::Function { name, args }
+                if name.eq_ignore_ascii_case("calc")
+                    || name.eq_ignore_ascii_case("-webkit-calc") =>
+            {
+                if let Some(px) = eval_simple_calc(args, ctx, ctx.viewport_width) {
+                    CssValue::Length(px as f64, LengthUnit::Px)
+                } else {
+                    v.clone()
+                }
             }
             _ => v.clone(),
         })
@@ -319,6 +367,7 @@ pub fn resolve_style(
         }
         let resolved_values = resolve_css_values(&decl.value, ctx);
         let resolved_values = resolve_property_percentages(&decl.name, &resolved_values, ctx);
+        let resolved_values = resolve_remaining_calcs(&resolved_values, ctx);
         let resolved_decl = Declaration {
             name: decl.name.clone(),
             value: resolved_values,
@@ -332,6 +381,7 @@ pub fn resolve_style(
         }
         let resolved_values = resolve_css_values(&decl.value, ctx);
         let resolved_values = resolve_property_percentages(&decl.name, &resolved_values, ctx);
+        let resolved_values = resolve_remaining_calcs(&resolved_values, ctx);
         let resolved_decl = Declaration {
             name: decl.name.clone(),
             value: resolved_values,
@@ -440,6 +490,10 @@ pub fn apply_declaration(
                     "table-cell" => Display::Block,
                     "contents" => Display::Block,
                     "flow-root" => Display::Block,
+                    "-webkit-box" | "-moz-box" => Display::Flex,
+                    "-webkit-flex" | "-moz-flex" => Display::Flex,
+                    "-webkit-inline-box" | "-moz-inline-box" => Display::InlineFlex,
+                    "-webkit-inline-flex" | "-moz-inline-flex" => Display::InlineFlex,
                     _ => style.display,
                 };
             } else if matches!(decl.value.first(), Some(CssValue::None)) {
@@ -1287,6 +1341,62 @@ pub fn apply_declaration(
         }
 
         "order" => {}
+
+        // Legacy -webkit-box-* flexbox properties (mapped to modern flexbox).
+        "box-pack" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.flex.justify_content = match kw {
+                    "start" => JustifyContent::FlexStart,
+                    "end" => JustifyContent::FlexEnd,
+                    "center" => JustifyContent::Center,
+                    "justify" => JustifyContent::SpaceBetween,
+                    _ => style.flex.justify_content,
+                };
+            }
+        }
+
+        "box-align" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.flex.align_items = match kw {
+                    "start" => AlignItems::FlexStart,
+                    "end" => AlignItems::FlexEnd,
+                    "center" => AlignItems::Center,
+                    "baseline" => AlignItems::Baseline,
+                    "stretch" => AlignItems::Stretch,
+                    _ => style.flex.align_items,
+                };
+            }
+        }
+
+        "box-orient" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                style.flex.direction = match kw {
+                    "horizontal" | "inline-axis" => FlexDirection::Row,
+                    "vertical" | "block-axis" => FlexDirection::Column,
+                    _ => style.flex.direction,
+                };
+            }
+        }
+
+        "box-direction" => {
+            if let Some(kw) = first_keyword(&decl.value) {
+                if kw == "reverse" {
+                    style.flex.direction = match style.flex.direction {
+                        FlexDirection::Row => FlexDirection::RowReverse,
+                        FlexDirection::Column => FlexDirection::ColumnReverse,
+                        other => other,
+                    };
+                }
+            }
+        }
+
+        "box-flex" => {
+            if let Some(n) = first_number(&decl.value) {
+                style.flex.grow = n;
+            }
+        }
+
+        "box-ordinal-group" | "box-lines" => {}
 
         // Silently accept properties we parse but don't render yet.
         "outline" | "outline-width" | "outline-style" | "outline-color" | "outline-offset"
