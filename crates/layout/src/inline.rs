@@ -76,7 +76,8 @@ pub fn layout_inline_content(
         let can_break_word = tree.get(child_id)
             .map(|b| {
                 b.kind == LayoutBoxKind::TextRun
-                    && (matches!(b.computed_style.word_break, style::WordBreak::BreakAll | style::WordBreak::BreakWord)
+                    && (b.computed_style.hyphens
+                        || matches!(b.computed_style.word_break, style::WordBreak::BreakAll | style::WordBreak::BreakWord)
                         || matches!(b.computed_style.overflow_wrap, style::OverflowWrap::BreakWord | style::OverflowWrap::Anywhere))
             })
             .unwrap_or(false);
@@ -224,6 +225,31 @@ pub fn layout_inline_content(
                         b.box_model.padding_box.x += offset;
                         b.box_model.margin_box.x += offset;
                     }
+                }
+            }
+        }
+    }
+
+    // Handle unicode-bidi: bidi-override with RTL direction by reversing item order.
+    let bidi = children.first()
+        .and_then(|&id| tree.get(id))
+        .map(|b| b.computed_style.unicode_bidi)
+        .unwrap_or(style::UnicodeBidi::Normal);
+    let bidi_dir = children.first()
+        .and_then(|&id| tree.get(id))
+        .map(|b| b.computed_style.direction)
+        .unwrap_or(style::Direction::Ltr);
+    if bidi == style::UnicodeBidi::BidiOverride && bidi_dir == style::Direction::Rtl {
+        for line in &mut lines {
+            let line_w = line.width;
+            for item in &mut line.items {
+                let new_x = line_w - item.x - item.width;
+                item.x = new_x;
+                if let Some(b) = tree.get_mut(item.box_id) {
+                    b.box_model.content_box.x = new_x;
+                    b.box_model.border_box.x = new_x;
+                    b.box_model.padding_box.x = new_x;
+                    b.box_model.margin_box.x = new_x;
                 }
             }
         }

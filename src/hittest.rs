@@ -19,6 +19,8 @@ pub struct HitTestResult {
     pub link_url: Option<String>,
     /// The `user-select` value of the hit element.
     pub user_select: style::UserSelect,
+    /// The `resize` value of the hit element.
+    pub resize: style::Resize,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -31,14 +33,14 @@ pub struct HitTestResult {
 /// containing the point, then walks the DOM ancestors of that box's node
 /// to find any enclosing `<a>` element with an `href` attribute.
 pub fn hit_test(tree: &LayoutTree, dom: &Dom, x: f32, y: f32) -> HitTestResult {
-    let (node_id, user_select) = match tree.root {
+    let (node_id, user_select, resize) = match tree.root {
         Some(root_id) => find_deepest_box(tree, root_id, x, y),
-        None => (None, style::UserSelect::Auto),
+        None => (None, style::UserSelect::Auto, style::Resize::None),
     };
 
     let link_url = node_id.and_then(|nid| find_link_ancestor(dom, nid));
 
-    HitTestResult { node_id, link_url, user_select }
+    HitTestResult { node_id, link_url, user_select, resize }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -54,10 +56,10 @@ fn find_deepest_box(
     box_id: LayoutBoxId,
     x: f32,
     y: f32,
-) -> (Option<NodeId>, style::UserSelect) {
+) -> (Option<NodeId>, style::UserSelect, style::Resize) {
     let layout_box = match tree.get(box_id) {
         Some(b) => b,
-        None => return (None, style::UserSelect::Auto),
+        None => return (None, style::UserSelect::Auto, style::Resize::None),
     };
     let border_box = layout_box.box_model.border_box;
 
@@ -67,7 +69,7 @@ fn find_deepest_box(
         || x > border_box.x + border_box.w
         || y > border_box.y + border_box.h
     {
-        return (None, style::UserSelect::Auto);
+        return (None, style::UserSelect::Auto, style::Resize::None);
     }
 
     // Try children first (depth-first) — iterate in reverse so that
@@ -75,19 +77,19 @@ fn find_deepest_box(
     // Children with pointer-events:auto are still clickable even if parent is none.
     let children = tree.children(box_id);
     for &child_id in children.iter().rev() {
-        let (node_id, us) = find_deepest_box(tree, child_id, x, y);
+        let (node_id, us, rs) = find_deepest_box(tree, child_id, x, y);
         if node_id.is_some() {
-            return (node_id, us);
+            return (node_id, us, rs);
         }
     }
 
     // Skip this box itself if pointer-events: none.
     if layout_box.computed_style.pointer_events == style::PointerEvents::None {
-        return (None, style::UserSelect::Auto);
+        return (None, style::UserSelect::Auto, style::Resize::None);
     }
 
     // No child matched — return this box's node (if it has one).
-    (layout_box.node, layout_box.computed_style.user_select)
+    (layout_box.node, layout_box.computed_style.user_select, layout_box.computed_style.resize)
 }
 
 /// Walk the DOM ancestors of `node_id` (including `node_id` itself) to find

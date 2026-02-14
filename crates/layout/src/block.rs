@@ -413,6 +413,21 @@ fn layout_table_fixed(
     if children.is_empty() {
         return 0.0;
     }
+    // Reorder children: caption-side:bottom elements move to the end.
+    let mut ordered: Vec<LayoutBoxId> = Vec::with_capacity(children.len());
+    let mut bottom_captions: Vec<LayoutBoxId> = Vec::new();
+    for &child_id in children {
+        let at_bottom = tree.get(child_id)
+            .map(|b| b.computed_style.caption_side == style::CaptionSide::Bottom)
+            .unwrap_or(false);
+        if at_bottom {
+            bottom_captions.push(child_id);
+        } else {
+            ordered.push(child_id);
+        }
+    }
+    ordered.extend(bottom_captions);
+    let children = &ordered;
     let mut cursor_y = 0.0f32;
     for &row_id in children {
         let row_children = tree.children(row_id);

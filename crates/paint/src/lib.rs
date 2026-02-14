@@ -136,6 +136,17 @@ fn paint_layout_box(tree: &LayoutTree, box_id: LayoutBoxId, list: &mut DisplayLi
 
     let is_visible = style.visibility == Visibility::Visible;
 
+    // Skip empty table cells when empty-cells: hide (only affects block boxes
+    // that look like table cells — no text content and no children).
+    if style.empty_cells == style::EmptyCells::Hide
+        && layout_box.kind == LayoutBoxKind::Block
+        && layout_box.text.is_none()
+        && tree.children(box_id).is_empty()
+        && style.border_collapse != style::BorderCollapse::Separate
+    {
+        return;
+    }
+
     // Handle opacity (CSS opacity + filter:opacity combined).
     let filter_opacity = compute_filter_opacity(&style.filter);
     let combined_opacity = style.opacity * filter_opacity;
@@ -144,6 +155,13 @@ fn paint_layout_box(tree: &LayoutTree, box_id: LayoutBoxId, list: &mut DisplayLi
         list.push(DisplayItem::PushOpacity {
             opacity: combined_opacity,
         });
+    }
+
+    // Handle isolation / will-change stacking context.
+    let needs_isolation = !needs_opacity
+        && (style.isolation == style::Isolation::Isolate || style.will_change);
+    if needs_isolation {
+        list.push(DisplayItem::PushOpacity { opacity: 1.0 });
     }
 
     // Handle overflow clipping (includes contain: paint).
@@ -192,9 +210,12 @@ fn paint_layout_box(tree: &LayoutTree, box_id: LayoutBoxId, list: &mut DisplayLi
         }
     }
 
-    // Pop clip/opacity.
+    // Pop clip/opacity/isolation.
     if needs_clip {
         list.push(DisplayItem::PopClip);
+    }
+    if needs_isolation {
+        list.push(DisplayItem::PopOpacity);
     }
     if needs_opacity {
         list.push(DisplayItem::PopOpacity);
@@ -608,6 +629,21 @@ fn paint_text(layout_box: &LayoutBox, list: &mut DisplayList) {
             });
         }
         style::TextDecoration::None => {}
+    }
+
+    // Paint text cursor using caret-color (only for inline-block form inputs).
+    if let Some(caret_c) = style.caret_color {
+        if layout_box.kind == LayoutBoxKind::TextRun
+            && style.display == Display::Inline
+        {
+            let caret_x = content_box.x + x_offset;
+            let caret_h = font_size * 1.2;
+            let caret_y = content_box.y + (font_size - caret_h) * 0.5;
+            list.push(DisplayItem::SolidRect {
+                rect: Rect::new(caret_x, caret_y, 1.5, caret_h),
+                color: caret_c,
+            });
+        }
     }
 }
 
