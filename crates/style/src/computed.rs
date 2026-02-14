@@ -452,7 +452,7 @@ pub enum ListStyleType {
 
 impl Default for ListStyleType {
     fn default() -> Self {
-        ListStyleType::Disc
+        ListStyleType::None
     }
 }
 
@@ -1227,7 +1227,7 @@ impl Default for ComputedStyle {
             visibility: Visibility::Visible,
             cursor: Cursor::Auto,
 
-            list_style_type: ListStyleType::Disc,
+            list_style_type: ListStyleType::None,
 
             box_shadow: Vec::new(),
 

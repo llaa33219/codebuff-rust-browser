@@ -770,7 +770,6 @@ mod tests {
         let style = ComputedStyle {
             display: Display::Block,
             background_color: color,
-            list_style_type: style::ListStyleType::None,
             ..ComputedStyle::default()
         };
         let mut b = LayoutBox::new(None, LayoutBoxKind::Block, style);
@@ -917,13 +916,11 @@ mod tests {
         let parent_style = ComputedStyle {
             display: Display::Block,
             background_color: Color::WHITE,
-            list_style_type: style::ListStyleType::None,
             ..ComputedStyle::default()
         };
         let child_style = ComputedStyle {
             display: Display::Block,
             background_color: Color::RED,
-            list_style_type: style::ListStyleType::None,
             ..ComputedStyle::default()
         };
 

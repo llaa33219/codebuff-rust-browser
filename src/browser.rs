@@ -49,7 +49,8 @@ const UA_CSS: &str = "
     h5 { font-size: 14px; font-weight: bold; margin: 6px 0; }
     h6 { font-size: 12px; font-weight: bold; margin: 4px 0; }
     p  { margin: 8px 0; }
-    ul, ol { margin: 8px 0; padding: 0 0 0 24px; }
+    ul { margin: 8px 0; padding: 0 0 0 24px; list-style-type: disc; }
+    ol { margin: 8px 0; padding: 0 0 0 24px; list-style-type: decimal; }
     li { display: list-item; margin: 4px 0; }
     a { color: #0066cc; }
     b, strong { font-weight: bold; }
