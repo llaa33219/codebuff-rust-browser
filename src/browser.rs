@@ -1260,6 +1260,16 @@ fn offset_display_item(item: &DisplayItem, dy: f32) -> DisplayItem {
             }
         }
 
+        DisplayItem::RoundedRect { rect, radii, color } => DisplayItem::RoundedRect {
+            rect: Rect::new(rect.x, rect.y + dy, rect.w, rect.h),
+            radii: *radii,
+            color: *color,
+        },
+        DisplayItem::LinearGradient { rect, angle_deg, stops } => DisplayItem::LinearGradient {
+            rect: Rect::new(rect.x, rect.y + dy, rect.w, rect.h),
+            angle_deg: *angle_deg,
+            stops: stops.clone(),
+        },
         DisplayItem::Image { rect, image_id } => DisplayItem::Image {
             rect: Rect::new(rect.x, rect.y + dy, rect.w, rect.h),
             image_id: *image_id,

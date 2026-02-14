@@ -55,6 +55,20 @@ pub enum DisplayItem {
         glyphs: Vec<PositionedGlyph>,
     },
 
+    /// Fill a rectangle with rounded corners.
+    RoundedRect {
+        rect: Rect,
+        radii: [f32; 4],
+        color: Color,
+    },
+
+    /// Draw a linear gradient.
+    LinearGradient {
+        rect: Rect,
+        angle_deg: f32,
+        stops: Vec<(f32, Color)>,
+    },
+
     /// Draw an image.
     Image {
         rect: Rect,
@@ -219,17 +233,37 @@ fn paint_box_shadow(layout_box: &LayoutBox, list: &mut DisplayList) {
     }
 }
 
-/// Paint the background color of a box.
+/// Paint the background color and image of a box.
 fn paint_background(layout_box: &LayoutBox, list: &mut DisplayList) {
-    let color = layout_box.computed_style.background_color;
-    if color.a == 0 {
-        return; // fully transparent
+    let style = &layout_box.computed_style;
+    let border_box = layout_box.box_model.border_box;
+    let radii = style.border_radius;
+    let has_radius = radii.iter().any(|&r| r > 0.0);
+
+    let color = style.background_color;
+    if color.a > 0 {
+        if has_radius {
+            list.push(DisplayItem::RoundedRect {
+                rect: border_box,
+                radii,
+                color,
+            });
+        } else {
+            list.push(DisplayItem::SolidRect {
+                rect: border_box,
+                color,
+            });
+        }
     }
 
-    list.push(DisplayItem::SolidRect {
-        rect: layout_box.box_model.border_box,
-        color,
-    });
+    if let style::BackgroundImage::LinearGradient { angle_deg, ref stops } = style.background_image {
+        let grad_stops: Vec<(f32, Color)> = stops.iter().map(|s| (s.position, s.color)).collect();
+        list.push(DisplayItem::LinearGradient {
+            rect: border_box,
+            angle_deg,
+            stops: grad_stops,
+        });
+    }
 }
 
 /// Paint the borders of a box.
@@ -327,6 +361,29 @@ fn paint_text(layout_box: &LayoutBox, list: &mut DisplayList) {
         let mut s: String = display_text.chars().take(char_count).collect();
         s.push('\u{2026}');
         display_text = s;
+    }
+
+    // Paint text shadows (behind main text).
+    for shadow in &style.text_shadow {
+        let shadow_glyphs: Vec<PositionedGlyph> = glyphs.iter().map(|g| {
+            PositionedGlyph {
+                glyph_id: g.glyph_id,
+                x: g.x + shadow.offset_x,
+                y: g.y + shadow.offset_y,
+            }
+        }).collect();
+        list.push(DisplayItem::TextRun {
+            rect: Rect::new(
+                content_box.x + shadow.offset_x,
+                content_box.y + shadow.offset_y,
+                content_box.w,
+                content_box.h,
+            ),
+            text: display_text.clone(),
+            color: shadow.color,
+            font_size,
+            glyphs: shadow_glyphs,
+        });
     }
 
     list.push(DisplayItem::TextRun {

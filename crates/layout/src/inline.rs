@@ -129,6 +129,33 @@ pub fn layout_inline_content(
         lines.push(current_line);
     }
 
+    // Apply vertical-align offsets within each line.
+    for line in &lines {
+        for item in &line.items {
+            let va = tree.get(item.box_id)
+                .map(|b| b.computed_style.vertical_align)
+                .unwrap_or(style::VerticalAlign::Baseline);
+
+            let dy = match va {
+                style::VerticalAlign::Top | style::VerticalAlign::TextTop => 0.0,
+                style::VerticalAlign::Middle => (line.height - item.height) / 2.0,
+                style::VerticalAlign::Bottom | style::VerticalAlign::TextBottom => line.height - item.height,
+                style::VerticalAlign::Sub => line.height * 0.15,
+                style::VerticalAlign::Super => -(line.height * 0.15),
+                style::VerticalAlign::Baseline => 0.0,
+            };
+
+            if dy.abs() > 0.001 {
+                if let Some(b) = tree.get_mut(item.box_id) {
+                    b.box_model.content_box.y += dy;
+                    b.box_model.border_box.y += dy;
+                    b.box_model.padding_box.y += dy;
+                    b.box_model.margin_box.y += dy;
+                }
+            }
+        }
+    }
+
     // Apply text-align offset (inherited, so read from first child).
     let text_align = children.first()
         .and_then(|&id| tree.get(id))

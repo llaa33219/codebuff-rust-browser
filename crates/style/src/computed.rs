@@ -541,6 +541,43 @@ impl Default for BorderSide {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// BackgroundImage
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GradientStop {
+    pub position: f32,
+    pub color: Color,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BackgroundImage {
+    None,
+    LinearGradient {
+        angle_deg: f32,
+        stops: Vec<GradientStop>,
+    },
+}
+
+impl Default for BackgroundImage {
+    fn default() -> Self {
+        BackgroundImage::None
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TextShadow
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextShadow {
+    pub offset_x: f32,
+    pub offset_y: f32,
+    pub blur: f32,
+    pub color: Color,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // BoxShadow
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -647,6 +684,12 @@ pub struct ComputedStyle {
 
     // -- Box shadow --
     pub box_shadow: Vec<BoxShadow>,
+
+    // -- Background image --
+    pub background_image: BackgroundImage,
+
+    // -- Text shadow --
+    pub text_shadow: Vec<TextShadow>,
 }
 
 impl Default for ComputedStyle {
@@ -728,6 +771,10 @@ impl Default for ComputedStyle {
             list_style_type: ListStyleType::Disc,
 
             box_shadow: Vec::new(),
+
+            background_image: BackgroundImage::None,
+
+            text_shadow: Vec::new(),
         }
     }
 }

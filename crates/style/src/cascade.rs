@@ -547,8 +547,11 @@ pub fn apply_declaration(
                             if let Some(color) = parse_function_color(&lower, args) {
                                 style.background_color = color;
                             }
+                        } else if lower == "linear-gradient" || lower == "-webkit-linear-gradient" {
+                            if let Some((angle, stops)) = parse_linear_gradient_args(args, style.color) {
+                                style.background_image = BackgroundImage::LinearGradient { angle_deg: angle, stops };
+                            }
                         }
-                        // Silently skip gradient, url, etc.
                     }
                     CssValue::Keyword(kw) if kw == "transparent" => {
                         style.background_color = Color::TRANSPARENT;
@@ -563,6 +566,7 @@ pub fn apply_declaration(
                     }
                     CssValue::None => {
                         style.background_color = Color::TRANSPARENT;
+                        style.background_image = BackgroundImage::None;
                     }
                     CssValue::Url(_) => {
                         // background-image URL — silently accept
@@ -1544,6 +1548,35 @@ pub fn apply_declaration(
 
         "box-ordinal-group" | "box-lines" => {}
 
+        "text-shadow" => {
+            if matches!(decl.value.first(), Some(CssValue::None))
+                || matches!(decl.value.first(), Some(CssValue::Keyword(k)) if k == "none")
+            {
+                style.text_shadow.clear();
+            } else if let Some(shadow) = parse_text_shadow(&decl.value, style.color) {
+                style.text_shadow = vec![shadow];
+            }
+        }
+
+        "background-image" => {
+            if matches!(decl.value.first(), Some(CssValue::None))
+                || matches!(decl.value.first(), Some(CssValue::Keyword(k)) if k == "none")
+            {
+                style.background_image = BackgroundImage::None;
+            } else {
+                for v in &decl.value {
+                    if let CssValue::Function { name, args } = v {
+                        let lower = name.to_ascii_lowercase();
+                        if lower == "linear-gradient" || lower == "-webkit-linear-gradient" {
+                            if let Some((angle, stops)) = parse_linear_gradient_args(args, style.color) {
+                                style.background_image = BackgroundImage::LinearGradient { angle_deg: angle, stops };
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         "box-shadow" => {
             if matches!(decl.value.first(), Some(CssValue::None))
                 || matches!(decl.value.first(), Some(CssValue::Keyword(k)) if k == "none")
@@ -1566,10 +1599,9 @@ pub fn apply_declaration(
         | "will-change" | "contain" | "content"
         | "filter" | "backdrop-filter"
         | "mix-blend-mode" | "isolation"
-        | "background-image" | "background-position" | "background-repeat"
+        | "background-position" | "background-repeat"
         | "background-size" | "background-attachment" | "background-origin"
         | "background-clip" | "background-blend-mode"
-        | "text-shadow"
         | "clip" | "clip-path" | "mask" | "mask-image"
         | "pointer-events" | "touch-action" | "user-select"
         | "resize" | "appearance"
@@ -2052,6 +2084,100 @@ fn parse_box_shadow(values: &[CssValue], current_color: Color) -> Option<BoxShad
     } else {
         None
     }
+}
+
+fn parse_text_shadow(values: &[CssValue], current_color: Color) -> Option<TextShadow> {
+    let mut lengths = Vec::new();
+    let mut color = None;
+    for v in values {
+        match v {
+            CssValue::Length(val, unit) => lengths.push(resolve_length(*val, unit, 16.0)),
+            CssValue::Number(n) if *n == 0.0 => lengths.push(0.0),
+            CssValue::Color(c) => color = Some(css_color_to_color(c)),
+            CssValue::Keyword(k) if k == "currentcolor" => color = Some(current_color),
+            CssValue::Function { name, args } => {
+                let lower = name.to_ascii_lowercase();
+                if lower == "rgba" || lower == "rgb" {
+                    if let Some(c) = parse_function_color(&lower, args) {
+                        color = Some(c);
+                    }
+                }
+            }
+            CssValue::Keyword(k) => {
+                if let Some(c) = resolve_system_color(k) {
+                    color = Some(c);
+                }
+            }
+            _ => {}
+        }
+    }
+    if lengths.len() >= 2 {
+        Some(TextShadow {
+            offset_x: lengths[0],
+            offset_y: lengths[1],
+            blur: lengths.get(2).copied().unwrap_or(0.0),
+            color: color.unwrap_or(current_color),
+        })
+    } else {
+        None
+    }
+}
+
+fn parse_linear_gradient_args(args: &[CssValue], current_color: Color) -> Option<(f32, Vec<GradientStop>)> {
+    if args.is_empty() { return None; }
+
+    let mut angle_deg = 180.0f32;
+    let mut color_start = 0;
+
+    if let Some(CssValue::Keyword(k)) = args.first() {
+        if k == "to" {
+            if let Some(CssValue::Keyword(dir)) = args.get(1) {
+                angle_deg = match dir.as_str() {
+                    "top" => 0.0,
+                    "right" => 90.0,
+                    "bottom" => 180.0,
+                    "left" => 270.0,
+                    _ => 180.0,
+                };
+                color_start = 2;
+            }
+        }
+    }
+
+    let mut colors: Vec<Color> = Vec::new();
+    for v in &args[color_start..] {
+        match v {
+            CssValue::Color(c) => colors.push(css_color_to_color(c)),
+            CssValue::Function { name, args: fargs } => {
+                let lower = name.to_ascii_lowercase();
+                if lower == "rgba" || lower == "rgb" {
+                    if let Some(c) = parse_function_color(&lower, fargs) {
+                        colors.push(c);
+                    }
+                }
+            }
+            CssValue::Keyword(k) if k == "transparent" => colors.push(Color::TRANSPARENT),
+            CssValue::Keyword(k) if k == "currentcolor" => colors.push(current_color),
+            CssValue::Keyword(k) => {
+                if let Some(c) = resolve_system_color(k) {
+                    colors.push(c);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if colors.len() < 2 { return None; }
+
+    let count = colors.len();
+    let stops = colors.into_iter().enumerate().map(|(i, color)| {
+        GradientStop {
+            position: i as f32 / (count - 1) as f32,
+            color,
+        }
+    }).collect();
+
+    Some((angle_deg, stops))
 }
 
 fn apply_border_side_shorthand(values: &[CssValue], side: &mut BorderSide, parent_font_size: f32, current_color: Color) {

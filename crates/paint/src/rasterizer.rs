@@ -71,6 +71,62 @@ fn clip_rect(r: &Rect, clip: &Rect) -> Rect {
     r.intersect(*clip)
 }
 
+/// Check if a pixel center (rx, ry) is inside a rounded rectangle.
+#[inline]
+fn is_inside_rounded(rx: f32, ry: f32, w: f32, h: f32, r_tl: f32, r_tr: f32, r_br: f32, r_bl: f32) -> bool {
+    if rx < r_tl && ry < r_tl {
+        let dx = r_tl - rx;
+        let dy = r_tl - ry;
+        return dx * dx + dy * dy <= r_tl * r_tl;
+    }
+    if rx > w - r_tr && ry < r_tr {
+        let dx = rx - (w - r_tr);
+        let dy = r_tr - ry;
+        return dx * dx + dy * dy <= r_tr * r_tr;
+    }
+    if rx > w - r_br && ry > h - r_br {
+        let dx = rx - (w - r_br);
+        let dy = ry - (h - r_br);
+        return dx * dx + dy * dy <= r_br * r_br;
+    }
+    if rx < r_bl && ry > h - r_bl {
+        let dx = r_bl - rx;
+        let dy = ry - (h - r_bl);
+        return dx * dx + dy * dy <= r_bl * r_bl;
+    }
+    true
+}
+
+/// Linearly interpolate between two u8 values.
+#[inline]
+fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
+    (a as f32 + (b as f32 - a as f32) * t).round().clamp(0.0, 255.0) as u8
+}
+
+/// Interpolate a color from a list of gradient stops at position `t`.
+fn interpolate_gradient_color(stops: &[(f32, Color)], t: f32) -> Color {
+    if stops.is_empty() { return Color::TRANSPARENT; }
+    if t <= stops[0].0 { return stops[0].1; }
+    let last = stops.len() - 1;
+    if t >= stops[last].0 { return stops[last].1; }
+    for i in 1..stops.len() {
+        if t <= stops[i].0 {
+            let range = stops[i].0 - stops[i - 1].0;
+            if range <= 0.0 { return stops[i].1; }
+            let lt = (t - stops[i - 1].0) / range;
+            let c1 = stops[i - 1].1;
+            let c2 = stops[i].1;
+            return Color::rgba(
+                lerp_u8(c1.r, c2.r, lt),
+                lerp_u8(c1.g, c2.g, lt),
+                lerp_u8(c1.b, c2.b, lt),
+                lerp_u8(c1.a, c2.a, lt),
+            );
+        }
+    }
+    stops[last].1
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Framebuffer
 // ─────────────────────────────────────────────────────────────────────────────
@@ -157,6 +213,66 @@ impl Framebuffer {
     /// Draw a vertical line at `(x, y)` with height `h`.
     pub fn draw_v_line(&mut self, x: i32, y: i32, h: u32, color: u32) {
         self.fill_rect(x, y, 1, h, color);
+    }
+
+    /// Fill a rectangle with rounded corners, clipped to the given bounds.
+    pub fn fill_rounded_rect(
+        &mut self,
+        x: i32, y: i32, w: u32, h: u32,
+        radii: [f32; 4],
+        color: u32,
+        clip_x0: i32, clip_y0: i32, clip_x1: i32, clip_y1: i32,
+    ) {
+        if (color >> 24) == 0 || w == 0 || h == 0 { return; }
+
+        let max_r = (w as f32 / 2.0).min(h as f32 / 2.0);
+        let r_tl = radii[0].min(max_r).max(0.0);
+        let r_tr = radii[1].min(max_r).max(0.0);
+        let r_br = radii[2].min(max_r).max(0.0);
+        let r_bl = radii[3].min(max_r).max(0.0);
+
+        let iter_x0 = x.max(clip_x0).max(0);
+        let iter_y0 = y.max(clip_y0).max(0);
+        let iter_x1 = ((x as i64 + w as i64) as i32).min(clip_x1).min(self.width as i32);
+        let iter_y1 = ((y as i64 + h as i64) as i32).min(clip_y1).min(self.height as i32);
+        if iter_x0 >= iter_x1 || iter_y0 >= iter_y1 { return; }
+
+        let opaque = (color >> 24) == 0xFF;
+        let wf = w as f32;
+        let hf = h as f32;
+        let top_zone = r_tl.max(r_tr);
+        let bot_zone = hf - r_bl.max(r_br);
+
+        for row in iter_y0..iter_y1 {
+            let ry = (row - y) as f32 + 0.5;
+            let in_corner_zone = ry < top_zone || ry > bot_zone;
+
+            if !in_corner_zone {
+                let row_start = (row as u32 * self.width + iter_x0 as u32) as usize;
+                let row_end = (row as u32 * self.width + iter_x1 as u32) as usize;
+                if opaque {
+                    self.pixels[row_start..row_end].fill(color);
+                } else {
+                    for idx in row_start..row_end {
+                        self.pixels[idx] = blend_argb(self.pixels[idx], color);
+                    }
+                }
+                continue;
+            }
+
+            for col in iter_x0..iter_x1 {
+                let rx = (col - x) as f32 + 0.5;
+                if !is_inside_rounded(rx, ry, wf, hf, r_tl, r_tr, r_br, r_bl) {
+                    continue;
+                }
+                let idx = (row as u32 * self.width + col as u32) as usize;
+                if opaque {
+                    self.pixels[idx] = color;
+                } else {
+                    self.pixels[idx] = blend_argb(self.pixels[idx], color);
+                }
+            }
+        }
     }
 
     /// Blit an alpha (A8) bitmap onto the framebuffer, tinted with `color`.
@@ -560,6 +676,28 @@ fn rasterize_item(
             );
         }
 
+        DisplayItem::RoundedRect { rect, radii, color } => {
+            let screen = state.to_screen(rect);
+            let clip = state.current_clip();
+            let c = apply_opacity(color, state.current_opacity());
+            let argb = color_to_argb(&c);
+            fb.fill_rounded_rect(
+                screen.x as i32, screen.y as i32,
+                screen.w.ceil() as u32, screen.h.ceil() as u32,
+                *radii, argb,
+                clip.x as i32, clip.y as i32,
+                (clip.x + clip.w).ceil() as i32,
+                (clip.y + clip.h).ceil() as i32,
+            );
+        }
+
+        DisplayItem::LinearGradient { rect, angle_deg, stops } => {
+            let screen = state.to_screen(rect);
+            let clip = state.current_clip();
+            let opacity = state.current_opacity();
+            render_linear_gradient(fb, &screen, *angle_deg, stops, &clip, opacity);
+        }
+
         DisplayItem::PushClip { rect } => {
             let screen = state.to_screen(rect);
             let new_clip = clip_rect(&screen, &state.current_clip());
@@ -580,6 +718,57 @@ fn rasterize_item(
         DisplayItem::PopOpacity => {
             if state.opacity_stack.len() > 1 {
                 state.opacity_stack.pop();
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Linear gradient rasterization
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn render_linear_gradient(
+    fb: &mut Framebuffer,
+    rect: &Rect,
+    angle_deg: f32,
+    stops: &[(f32, Color)],
+    clip: &Rect,
+    opacity: f32,
+) {
+    if stops.len() < 2 || rect.w <= 0.0 || rect.h <= 0.0 { return; }
+
+    let clipped = clip_rect(rect, clip);
+    if clipped.is_empty() { return; }
+
+    let angle_rad = angle_deg.to_radians();
+    let sin_a = angle_rad.sin();
+    let cos_a = angle_rad.cos();
+    let half_w = rect.w / 2.0;
+    let half_h = rect.h / 2.0;
+    let grad_len = (sin_a.abs() * rect.w + cos_a.abs() * rect.h).max(1.0);
+
+    let cx0 = (clipped.x as i32).max(0);
+    let cy0 = (clipped.y as i32).max(0);
+    let cx1 = ((clipped.x + clipped.w).ceil() as i32).min(fb.width as i32);
+    let cy1 = ((clipped.y + clipped.h).ceil() as i32).min(fb.height as i32);
+
+    for py in cy0..cy1 {
+        for px in cx0..cx1 {
+            let rx = px as f32 - rect.x - half_w;
+            let ry = py as f32 - rect.y - half_h;
+            let proj = (rx * sin_a - ry * cos_a) / grad_len + 0.5;
+            let t = proj.clamp(0.0, 1.0);
+
+            let color = interpolate_gradient_color(stops, t);
+            let c = apply_opacity(&color, opacity);
+            let argb = color_to_argb(&c);
+            if (argb >> 24) == 0 { continue; }
+
+            let idx = (py as u32 * fb.width + px as u32) as usize;
+            if (argb >> 24) == 0xFF {
+                fb.pixels[idx] = argb;
+            } else {
+                fb.pixels[idx] = blend_argb(fb.pixels[idx], argb);
             }
         }
     }
