@@ -541,11 +541,25 @@ pub fn apply_declaration(
             for v in &decl.value {
                 match v {
                     CssValue::Color(c) => style.background_color = css_color_to_color(c),
+                    CssValue::Function { name, args } => {
+                        let lower = name.to_ascii_lowercase();
+                        if lower == "rgba" || lower == "rgb" {
+                            if let Some(color) = parse_function_color(&lower, args) {
+                                style.background_color = color;
+                            }
+                        }
+                        // Silently skip gradient, url, etc.
+                    }
                     CssValue::Keyword(kw) if kw == "transparent" => {
                         style.background_color = Color::TRANSPARENT;
                     }
                     CssValue::Keyword(kw) if kw == "currentcolor" => {
                         style.background_color = style.color;
+                    }
+                    CssValue::Keyword(kw) => {
+                        if let Some(c) = resolve_system_color(kw) {
+                            style.background_color = c;
+                        }
                     }
                     CssValue::None => {
                         style.background_color = Color::TRANSPARENT;
@@ -1049,10 +1063,42 @@ pub fn apply_declaration(
             }
         }
 
-        "top" => style.top = first_length_or_none(&decl.value, style.font_size_px),
-        "right" => style.right = first_length_or_none(&decl.value, style.font_size_px),
-        "bottom" => style.bottom = first_length_or_none(&decl.value, style.font_size_px),
-        "left" => style.left = first_length_or_none(&decl.value, style.font_size_px),
+        "top" => {
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.top_pct = Some(*p as f32);
+                style.top = None;
+            } else {
+                style.top = first_length_or_none(&decl.value, style.font_size_px);
+                style.top_pct = None;
+            }
+        }
+        "right" => {
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.right_pct = Some(*p as f32);
+                style.right = None;
+            } else {
+                style.right = first_length_or_none(&decl.value, style.font_size_px);
+                style.right_pct = None;
+            }
+        }
+        "bottom" => {
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.bottom_pct = Some(*p as f32);
+                style.bottom = None;
+            } else {
+                style.bottom = first_length_or_none(&decl.value, style.font_size_px);
+                style.bottom_pct = None;
+            }
+        }
+        "left" => {
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.left_pct = Some(*p as f32);
+                style.left = None;
+            } else {
+                style.left = first_length_or_none(&decl.value, style.font_size_px);
+                style.left_pct = None;
+            }
+        }
 
         "inset" => {
             let vals = collect_edge_values_with_auto(&decl.value, style.font_size_px);
@@ -1062,6 +1108,10 @@ pub fn apply_declaration(
                 style.right = if r.is_infinite() { None } else { Some(r) };
                 style.bottom = if b.is_infinite() { None } else { Some(b) };
                 style.left = if l.is_infinite() { None } else { Some(l) };
+                style.top_pct = None;
+                style.right_pct = None;
+                style.bottom_pct = None;
+                style.left_pct = None;
             }
         }
 
@@ -1666,8 +1716,22 @@ fn first_keyword_or_none(values: &[CssValue]) -> Option<&str> {
 
 fn first_color(values: &[CssValue]) -> Option<Color> {
     for v in values {
-        if let CssValue::Color(c) = v {
-            return Some(css_color_to_color(c));
+        match v {
+            CssValue::Color(c) => return Some(css_color_to_color(c)),
+            CssValue::Function { name, args } => {
+                let lower = name.to_ascii_lowercase();
+                if lower == "rgba" || lower == "rgb" {
+                    if let Some(color) = parse_function_color(&lower, args) {
+                        return Some(color);
+                    }
+                }
+            }
+            CssValue::Keyword(kw) => {
+                if let Some(c) = resolve_system_color(kw) {
+                    return Some(c);
+                }
+            }
+            _ => {}
         }
     }
     None
@@ -1677,7 +1741,21 @@ fn first_color_or_current(values: &[CssValue], current_color: Color) -> Option<C
     for v in values {
         match v {
             CssValue::Color(c) => return Some(css_color_to_color(c)),
+            CssValue::Function { name, args } => {
+                let lower = name.to_ascii_lowercase();
+                if lower == "rgba" || lower == "rgb" {
+                    if let Some(color) = parse_function_color(&lower, args) {
+                        return Some(color);
+                    }
+                }
+            }
             CssValue::Keyword(kw) if kw == "currentcolor" => return Some(current_color),
+            CssValue::Keyword(kw) if kw == "transparent" => return Some(Color::TRANSPARENT),
+            CssValue::Keyword(kw) => {
+                if let Some(c) = resolve_system_color(kw) {
+                    return Some(c);
+                }
+            }
             _ => {}
         }
     }
@@ -1896,6 +1974,55 @@ fn apply_edge_shorthand(values: &[CssValue], edges: &mut Edges<f32>, parent_font
         edges.right = r;
         edges.bottom = b;
         edges.left = l;
+    }
+}
+
+fn resolve_system_color(name: &str) -> Option<Color> {
+    match name {
+        "canvas" | "Canvas" => Some(Color::WHITE),
+        "canvastext" | "CanvasText" => Some(Color::BLACK),
+        "linktext" | "LinkText" => Some(Color::rgb(0, 0, 238)),
+        "visitedtext" | "VisitedText" => Some(Color::rgb(85, 26, 139)),
+        "activetext" | "ActiveText" => Some(Color::rgb(255, 0, 0)),
+        "buttonface" | "ButtonFace" => Some(Color::rgb(240, 240, 240)),
+        "buttontext" | "ButtonText" => Some(Color::BLACK),
+        "buttonborder" | "ButtonBorder" => Some(Color::rgb(118, 118, 118)),
+        "field" | "Field" => Some(Color::WHITE),
+        "fieldtext" | "FieldText" => Some(Color::BLACK),
+        "highlight" | "Highlight" | "selecteditem" | "SelectedItem" => Some(Color::rgb(0, 120, 215)),
+        "highlighttext" | "HighlightText" => Some(Color::WHITE),
+        "graytext" | "GrayText" => Some(Color::rgb(109, 109, 109)),
+        "mark" | "Mark" => Some(Color::rgb(255, 255, 0)),
+        "marktext" | "MarkText" => Some(Color::BLACK),
+        _ => None,
+    }
+}
+
+fn parse_function_color(_name: &str, args: &[CssValue]) -> Option<Color> {
+    let mut nums = Vec::new();
+    for v in args {
+        match v {
+            CssValue::Number(n) => nums.push(*n),
+            CssValue::Percentage(p) => nums.push(*p * 255.0 / 100.0),
+            _ => {}
+        }
+    }
+    if nums.len() >= 3 {
+        let r = nums[0].clamp(0.0, 255.0) as u8;
+        let g = nums[1].clamp(0.0, 255.0) as u8;
+        let b = nums[2].clamp(0.0, 255.0) as u8;
+        let a = if nums.len() >= 4 {
+            if nums[3] <= 1.0 {
+                (nums[3] * 255.0) as u8
+            } else {
+                nums[3].clamp(0.0, 255.0) as u8
+            }
+        } else {
+            255
+        };
+        Some(Color::rgba(r, g, b, a))
+    } else {
+        None
     }
 }
 

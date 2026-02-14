@@ -615,6 +615,12 @@ pub struct ComputedStyle {
     pub bottom: Option<f32>,
     pub left: Option<f32>,
 
+    // -- Percentage position offsets (resolved at layout time) --
+    pub top_pct: Option<f32>,
+    pub right_pct: Option<f32>,
+    pub bottom_pct: Option<f32>,
+    pub left_pct: Option<f32>,
+
     // -- Flexbox --
     pub flex: FlexStyle,
     pub align_self: AlignSelf,
@@ -697,6 +703,11 @@ impl Default for ComputedStyle {
             right: None,
             bottom: None,
             left: None,
+
+            top_pct: None,
+            right_pct: None,
+            bottom_pct: None,
+            left_pct: None,
 
             flex: FlexStyle::default(),
             align_self: AlignSelf::Auto,

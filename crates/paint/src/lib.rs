@@ -119,11 +119,10 @@ fn paint_layout_box(tree: &LayoutTree, box_id: LayoutBoxId, list: &mut DisplayLi
     if style.display == Display::None {
         return;
     }
-    if style.visibility != Visibility::Visible {
-        return;
-    }
 
-    // Handle opacity.
+    let is_visible = style.visibility == Visibility::Visible;
+
+    // Handle opacity (always wrap — affects visible children even if parent is hidden).
     let needs_opacity = style.opacity < 1.0;
     if needs_opacity {
         list.push(DisplayItem::PushOpacity {
@@ -140,19 +139,28 @@ fn paint_layout_box(tree: &LayoutTree, box_id: LayoutBoxId, list: &mut DisplayLi
         });
     }
 
-    // 1. Paint background.
-    paint_background(layout_box, list);
+    // Only paint this box's own visual content if visible.
+    // Children are always traversed because they may have visibility: visible.
+    if is_visible {
+        // 1. Paint box shadows (behind the element).
+        paint_box_shadow(layout_box, list);
 
-    // 2. Paint borders.
-    paint_borders(layout_box, list);
+        // 2. Paint background.
+        paint_background(layout_box, list);
 
-    // 3. Paint content.
+        // 3. Paint borders.
+        paint_borders(layout_box, list);
+    }
+
+    // 4. Paint content.
     match layout_box.kind {
         LayoutBoxKind::TextRun => {
-            paint_text(layout_box, list);
+            if is_visible {
+                paint_text(layout_box, list);
+            }
         }
         _ => {
-            // Paint children in stacking order.
+            // Always paint children — they may have their own visibility.
             paint_children(tree, box_id, list);
         }
     }
@@ -163,6 +171,51 @@ fn paint_layout_box(tree: &LayoutTree, box_id: LayoutBoxId, list: &mut DisplayLi
     }
     if needs_opacity {
         list.push(DisplayItem::PopOpacity);
+    }
+}
+
+/// Paint box shadows behind the element.
+fn paint_box_shadow(layout_box: &LayoutBox, list: &mut DisplayList) {
+    for shadow in &layout_box.computed_style.box_shadow {
+        if shadow.inset {
+            continue;
+        }
+        let border_box = layout_box.box_model.border_box;
+        let shadow_rect = Rect::new(
+            border_box.x + shadow.offset_x - shadow.spread,
+            border_box.y + shadow.offset_y - shadow.spread,
+            border_box.w + shadow.spread * 2.0,
+            border_box.h + shadow.spread * 2.0,
+        );
+
+        if shadow.blur <= 0.0 {
+            list.push(DisplayItem::SolidRect {
+                rect: shadow_rect,
+                color: shadow.color,
+            });
+        } else {
+            let steps = (shadow.blur / 2.0).ceil().max(1.0) as usize;
+            let steps = steps.min(10);
+            for i in 0..steps {
+                let t = i as f32 / steps as f32;
+                let expand = t * shadow.blur;
+                let alpha_factor = 1.0 - t;
+                let alpha = (shadow.color.a as f32 * alpha_factor / steps as f32).round() as u8;
+                if alpha == 0 {
+                    continue;
+                }
+                let r = Rect::new(
+                    shadow_rect.x - expand,
+                    shadow_rect.y - expand,
+                    shadow_rect.w + expand * 2.0,
+                    shadow_rect.h + expand * 2.0,
+                );
+                list.push(DisplayItem::SolidRect {
+                    rect: r,
+                    color: Color::rgba(shadow.color.r, shadow.color.g, shadow.color.b, alpha),
+                });
+            }
+        }
     }
 }
 
@@ -246,9 +299,39 @@ fn paint_text(layout_box: &LayoutBox, list: &mut DisplayList) {
         x_offset += avg_char_width;
     }
 
+    // Handle text-overflow: ellipsis when text overflows.
+    let mut display_text = text;
+    let needs_ellipsis = style.text_overflow == style::TextOverflow::Ellipsis
+        && x_offset > content_box.w
+        && content_box.w > 0.0;
+    if needs_ellipsis {
+        let ellipsis_width = avg_char_width;
+        let max_width = (content_box.w - ellipsis_width).max(0.0);
+        let mut truncated = Vec::new();
+        let mut trunc_x = 0.0f32;
+        let mut char_count = 0usize;
+        for g in &glyphs {
+            if trunc_x + avg_char_width > max_width {
+                break;
+            }
+            truncated.push(g.clone());
+            trunc_x += avg_char_width;
+            char_count += 1;
+        }
+        truncated.push(PositionedGlyph {
+            glyph_id: '\u{2026}' as u16,
+            x: content_box.x + trunc_x,
+            y: content_box.y + y_offset,
+        });
+        glyphs = truncated;
+        let mut s: String = display_text.chars().take(char_count).collect();
+        s.push('\u{2026}');
+        display_text = s;
+    }
+
     list.push(DisplayItem::TextRun {
         rect: content_box,
-        text,
+        text: display_text,
         color: style.color,
         font_size,
         glyphs,

@@ -128,7 +128,7 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
 
     let content_height;
 
-    if display == style::Display::Flex {
+    if display == style::Display::Flex || display == style::Display::InlineFlex {
         // Delegate to flex layout (handles all children internally).
         content_height = layout_flex(tree, box_id, content_width);
     } else if flow_children.is_empty() {
@@ -199,8 +199,14 @@ fn layout_absolute_child(
 ) {
     let (top, right, bottom, left) = {
         match tree.get(child_id) {
-            Some(b) => (b.computed_style.top, b.computed_style.right,
-                        b.computed_style.bottom, b.computed_style.left),
+            Some(b) => {
+                let s = &b.computed_style;
+                let top = s.top.or_else(|| s.top_pct.map(|p| containing_height * p / 100.0));
+                let right = s.right.or_else(|| s.right_pct.map(|p| containing_width * p / 100.0));
+                let bottom = s.bottom.or_else(|| s.bottom_pct.map(|p| containing_height * p / 100.0));
+                let left = s.left.or_else(|| s.left_pct.map(|p| containing_width * p / 100.0));
+                (top, right, bottom, left)
+            }
             None => return,
         }
     };
