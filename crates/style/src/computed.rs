@@ -541,6 +541,20 @@ impl Default for BorderSide {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// BoxShadow
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoxShadow {
+    pub offset_x: f32,
+    pub offset_y: f32,
+    pub blur: f32,
+    pub spread: f32,
+    pub color: Color,
+    pub inset: bool,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ComputedStyle
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -587,6 +601,14 @@ pub struct ComputedStyle {
     pub max_width: Option<f32>,
     pub max_height: Option<f32>,
 
+    // -- Percentage sizing (resolved at layout time against containing block) --
+    pub width_pct: Option<f32>,
+    pub height_pct: Option<f32>,
+    pub min_width_pct: Option<f32>,
+    pub min_height_pct: Option<f32>,
+    pub max_width_pct: Option<f32>,
+    pub max_height_pct: Option<f32>,
+
     // -- Position offsets --
     pub top: Option<f32>,
     pub right: Option<f32>,
@@ -616,6 +638,9 @@ pub struct ComputedStyle {
 
     // -- List --
     pub list_style_type: ListStyleType,
+
+    // -- Box shadow --
+    pub box_shadow: Vec<BoxShadow>,
 }
 
 impl Default for ComputedStyle {
@@ -661,6 +686,13 @@ impl Default for ComputedStyle {
             max_width: None,
             max_height: None,
 
+            width_pct: None,
+            height_pct: None,
+            min_width_pct: None,
+            min_height_pct: None,
+            max_width_pct: None,
+            max_height_pct: None,
+
             top: None,
             right: None,
             bottom: None,
@@ -683,6 +715,8 @@ impl Default for ComputedStyle {
             cursor: Cursor::Auto,
 
             list_style_type: ListStyleType::Disc,
+
+            box_shadow: Vec::new(),
         }
     }
 }

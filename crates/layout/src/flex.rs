@@ -38,11 +38,17 @@ pub fn layout_flex(tree: &mut LayoutTree, container_id: LayoutBoxId, available_w
 
     let container_main_size = available_width;
 
-    // Step 1-2: Collect flex items.
+    // Step 1-2: Collect flex items (skip absolutely positioned children).
     let children = tree.children(container_id);
     let mut items: Vec<FlexItem> = Vec::with_capacity(children.len());
 
     for &child_id in &children {
+        let is_abs = tree.get(child_id)
+            .map(|b| matches!(b.computed_style.position, style::Position::Absolute | style::Position::Fixed))
+            .unwrap_or(false);
+        if is_abs {
+            continue;
+        }
         let (basis, grow, shrink) = {
             let b = match tree.get(child_id) {
                 Some(b) => b,

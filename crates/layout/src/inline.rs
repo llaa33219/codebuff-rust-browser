@@ -3,6 +3,7 @@
 use common::Rect;
 use style::TextAlign;
 use crate::tree::{LayoutBoxId, LayoutBoxKind, LayoutTree};
+use crate::block::layout_block;
 
 /// A single item positioned on a line.
 #[derive(Debug, Clone)]
@@ -45,7 +46,7 @@ pub fn layout_inline_content(
     let mut cursor_y = 0.0f32;
 
     for &child_id in children {
-        let (child_width, child_height) = measure_inline_box(tree, child_id, available_width);
+        let (mut child_width, mut child_height) = measure_inline_box(tree, child_id, available_width);
 
         // Check white-space to decide whether wrapping is allowed.
         let allow_wrap = tree.get(child_id)
@@ -69,14 +70,6 @@ pub fn layout_inline_content(
             cursor_x = 0.0;
         }
 
-        // Place the item on the current line.
-        let item = LineItem {
-            box_id: child_id,
-            x: cursor_x,
-            width: child_width,
-            height: child_height,
-        };
-
         // Update the box model position for this inline item.
         if let Some(b) = tree.get_mut(child_id) {
             b.box_model.content_box = Rect::new(cursor_x, cursor_y, child_width, child_height);
@@ -94,6 +87,36 @@ pub fn layout_inline_content(
         if is_inline {
             position_inline_children(tree, child_id);
         }
+
+        // For inline-block elements, recursively layout their children.
+        let is_inline_block = tree.get(child_id)
+            .map(|b| b.kind == LayoutBoxKind::InlineBlock)
+            .unwrap_or(false);
+        if is_inline_block {
+            let (_iw, _ih) = layout_block(tree, child_id, available_width);
+            if let Some(b) = tree.get_mut(child_id) {
+                let dx = cursor_x - b.box_model.margin_box.x;
+                let dy = cursor_y - b.box_model.margin_box.y;
+                b.box_model.content_box.x += dx;
+                b.box_model.content_box.y += dy;
+                b.box_model.padding_box.x += dx;
+                b.box_model.padding_box.y += dy;
+                b.box_model.border_box.x += dx;
+                b.box_model.border_box.y += dy;
+                b.box_model.margin_box.x += dx;
+                b.box_model.margin_box.y += dy;
+                child_width = b.box_model.margin_box.w;
+                child_height = b.box_model.margin_box.h;
+            }
+        }
+
+        // Place the item on the current line.
+        let item = LineItem {
+            box_id: child_id,
+            x: cursor_x,
+            width: child_width,
+            height: child_height,
+        };
 
         current_line.height = current_line.height.max(child_height);
         current_line.items.push(item);

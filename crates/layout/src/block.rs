@@ -16,21 +16,51 @@ use crate::flex::layout_flex;
 /// Returns `(width, height)` of the border box.
 pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width: f32) -> (f32, f32) {
     // Read style values we need.
-    let (margin, padding, border_widths, specified_width, specified_height, display, min_width, max_width, box_sizing) = {
+    let (margin, padding, border_widths, specified_width, specified_height, display, min_width, max_width, min_height, max_height, box_sizing) = {
         let b = match tree.get(box_id) {
             Some(b) => b,
             None => return (0.0, 0.0),
         };
         let s = &b.computed_style;
+        let width = match (s.width, s.width_pct) {
+            (Some(w), _) => Some(w),
+            (None, Some(pct)) => Some(containing_width * pct / 100.0),
+            _ => None,
+        };
+        let height = match (s.height, s.height_pct) {
+            (Some(h), _) => Some(h),
+            (None, Some(pct)) => Some(containing_width * pct / 100.0),
+            _ => None,
+        };
+        let min_w = match (s.min_width, s.min_width_pct) {
+            (Some(w), _) => Some(w),
+            (None, Some(pct)) => Some(containing_width * pct / 100.0),
+            _ => None,
+        };
+        let max_w = match (s.max_width, s.max_width_pct) {
+            (Some(w), _) => Some(w),
+            (None, Some(pct)) => Some(containing_width * pct / 100.0),
+            _ => None,
+        };
         (
             s.margin,
             s.padding,
             s.border_widths(),
-            s.width,
-            s.height,
+            width,
+            height,
             s.display,
-            s.min_width,
-            s.max_width,
+            min_w,
+            max_w,
+            match (s.min_height, s.min_height_pct) {
+                (Some(h), _) => Some(h),
+                (None, Some(pct)) => Some(containing_width * pct / 100.0),
+                _ => None,
+            },
+            match (s.max_height, s.max_height_pct) {
+                (Some(h), _) => Some(h),
+                (None, Some(pct)) => Some(containing_width * pct / 100.0),
+                _ => None,
+            },
             s.box_sizing,
         )
     };
@@ -69,14 +99,28 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
     // Collect children for layout.
     let children = tree.children(box_id);
 
-    // Determine if children are all block, all inline, or mixed.
-    let has_block_children = children.iter().any(|&c| {
+    // Separate absolutely positioned children from normal flow.
+    let mut flow_children = Vec::new();
+    let mut abs_children = Vec::new();
+    for &child_id in &children {
+        let is_abs = tree.get(child_id)
+            .map(|b| matches!(b.computed_style.position, style::Position::Absolute | style::Position::Fixed))
+            .unwrap_or(false);
+        if is_abs {
+            abs_children.push(child_id);
+        } else {
+            flow_children.push(child_id);
+        }
+    }
+
+    // Determine if flow children are all block, all inline, or mixed.
+    let has_block_children = flow_children.iter().any(|&c| {
         tree.get(c)
             .map(|b| matches!(b.kind, LayoutBoxKind::Block | LayoutBoxKind::Flex | LayoutBoxKind::Grid | LayoutBoxKind::Anonymous))
             .unwrap_or(false)
     });
 
-    let has_inline_children = children.iter().any(|&c| {
+    let has_inline_children = flow_children.iter().any(|&c| {
         tree.get(c)
             .map(|b| matches!(b.kind, LayoutBoxKind::Inline | LayoutBoxKind::InlineBlock | LayoutBoxKind::TextRun))
             .unwrap_or(false)
@@ -84,20 +128,20 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
 
     let content_height;
 
-    if children.is_empty() {
-        content_height = specified_height.unwrap_or(0.0);
-    } else if display == style::Display::Flex {
-        // Delegate to flex layout.
+    if display == style::Display::Flex {
+        // Delegate to flex layout (handles all children internally).
         content_height = layout_flex(tree, box_id, content_width);
+    } else if flow_children.is_empty() {
+        content_height = specified_height.unwrap_or(0.0);
     } else if has_block_children && !has_inline_children {
         // Pure block formatting context.
-        content_height = layout_block_children(tree, &children, content_width);
+        content_height = layout_block_children(tree, &flow_children, content_width);
     } else if !has_block_children && has_inline_children {
         // Pure inline formatting context.
-        content_height = layout_inline_children(tree, &children, content_width);
+        content_height = layout_inline_children(tree, &flow_children, content_width);
     } else {
         // Mixed: for simplicity, lay out all sequentially.
-        content_height = layout_mixed_children(tree, &children, content_width);
+        content_height = layout_mixed_children(tree, &flow_children, content_width);
     }
 
     let final_height = match specified_height {
@@ -109,6 +153,16 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
             }
         }
         None => content_height,
+    };
+
+    // Enforce max-height first, then min-height (per CSS spec, min wins if min > max).
+    let final_height = match max_height {
+        Some(mh) => final_height.min(mh),
+        None => final_height,
+    };
+    let final_height = match min_height {
+        Some(mh) => final_height.max(mh),
+        None => final_height,
     };
 
     // Compute the margin for auto-centering.
@@ -128,7 +182,63 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
         b.box_model = bm;
     }
 
+    // Position absolutely/fixed positioned children.
+    for &child_id in &abs_children {
+        layout_absolute_child(tree, child_id, content_width, final_height);
+    }
+
     (border_box_w, border_box_h)
+}
+
+/// Layout an absolutely positioned child relative to its containing block.
+fn layout_absolute_child(
+    tree: &mut LayoutTree,
+    child_id: LayoutBoxId,
+    containing_width: f32,
+    containing_height: f32,
+) {
+    let (top, right, bottom, left) = {
+        match tree.get(child_id) {
+            Some(b) => (b.computed_style.top, b.computed_style.right,
+                        b.computed_style.bottom, b.computed_style.left),
+            None => return,
+        }
+    };
+
+    let (_w, _h) = layout_block(tree, child_id, containing_width);
+
+    if let Some(b) = tree.get_mut(child_id) {
+        let box_w = b.box_model.border_box.w;
+        let box_h = b.box_model.border_box.h;
+
+        let target_x = if let Some(l) = left {
+            l
+        } else if let Some(r) = right {
+            (containing_width - r - box_w).max(0.0)
+        } else {
+            0.0
+        };
+
+        let target_y = if let Some(t) = top {
+            t
+        } else if let Some(bt) = bottom {
+            (containing_height - bt - box_h).max(0.0)
+        } else {
+            0.0
+        };
+
+        let dx = target_x - b.box_model.margin_box.x;
+        let dy = target_y - b.box_model.margin_box.y;
+
+        b.box_model.content_box.x += dx;
+        b.box_model.content_box.y += dy;
+        b.box_model.padding_box.x += dx;
+        b.box_model.padding_box.y += dy;
+        b.box_model.border_box.x += dx;
+        b.box_model.border_box.y += dy;
+        b.box_model.margin_box.x += dx;
+        b.box_model.margin_box.y += dy;
+    }
 }
 
 /// Layout block-level children vertically with margin collapsing.
@@ -330,14 +440,24 @@ pub fn resolve_absolute_positions(
             Some(b) => b,
             None => return,
         };
-        b.box_model.content_box.x += parent_x;
-        b.box_model.content_box.y += parent_y;
-        b.box_model.padding_box.x += parent_x;
-        b.box_model.padding_box.y += parent_y;
-        b.box_model.border_box.x += parent_x;
-        b.box_model.border_box.y += parent_y;
-        b.box_model.margin_box.x += parent_x;
-        b.box_model.margin_box.y += parent_y;
+
+        // Apply position:relative visual offset (doesn't affect flow).
+        let (rel_dx, rel_dy) = if b.computed_style.position == style::Position::Relative {
+            (b.computed_style.left.unwrap_or(0.0), b.computed_style.top.unwrap_or(0.0))
+        } else {
+            (0.0, 0.0)
+        };
+        let offset_x = parent_x + rel_dx;
+        let offset_y = parent_y + rel_dy;
+
+        b.box_model.content_box.x += offset_x;
+        b.box_model.content_box.y += offset_y;
+        b.box_model.padding_box.x += offset_x;
+        b.box_model.padding_box.y += offset_y;
+        b.box_model.border_box.x += offset_x;
+        b.box_model.border_box.y += offset_y;
+        b.box_model.margin_box.x += offset_x;
+        b.box_model.margin_box.y += offset_y;
         (b.box_model.content_box.x, b.box_model.content_box.y, b.children.clone())
     };
 

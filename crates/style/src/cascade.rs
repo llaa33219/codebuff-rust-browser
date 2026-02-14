@@ -195,12 +195,12 @@ pub fn resolve_property_percentages(
     // Per CSS spec, margin/padding percentages are always relative to the
     // containing block's *width* (even for top/bottom).
     let percent_base = match prop.as_str() {
-        "width" | "min-width" | "max-width" | "left" | "right"
+        "left" | "right"
         | "margin" | "margin-left" | "margin-right" | "margin-top" | "margin-bottom"
         | "padding" | "padding-left" | "padding-right" | "padding-top" | "padding-bottom" => {
             ctx.viewport_width
         }
-        "height" | "min-height" | "max-height" | "top" | "bottom" => ctx.viewport_height,
+        "top" | "bottom" => ctx.viewport_height,
         _ => return values.to_vec(),
     };
 
@@ -735,12 +735,60 @@ pub fn apply_declaration(
             apply_border_side_shorthand(&decl.value, &mut style.border.left, style.font_size_px, style.color);
         }
 
-        "width" => style.width = first_length_or_none(&decl.value, style.font_size_px),
-        "height" => style.height = first_length_or_none(&decl.value, style.font_size_px),
-        "min-width" => style.min_width = first_length_or_none(&decl.value, style.font_size_px),
-        "min-height" => style.min_height = first_length_or_none(&decl.value, style.font_size_px),
-        "max-width" => style.max_width = first_length_or_none(&decl.value, style.font_size_px),
-        "max-height" => style.max_height = first_length_or_none(&decl.value, style.font_size_px),
+        "width" => {
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.width_pct = Some(*p as f32);
+                style.width = None;
+            } else {
+                style.width = first_length_or_none(&decl.value, style.font_size_px);
+                style.width_pct = None;
+            }
+        }
+        "height" => {
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.height_pct = Some(*p as f32);
+                style.height = None;
+            } else {
+                style.height = first_length_or_none(&decl.value, style.font_size_px);
+                style.height_pct = None;
+            }
+        }
+        "min-width" => {
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.min_width_pct = Some(*p as f32);
+                style.min_width = None;
+            } else {
+                style.min_width = first_length_or_none(&decl.value, style.font_size_px);
+                style.min_width_pct = None;
+            }
+        }
+        "min-height" => {
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.min_height_pct = Some(*p as f32);
+                style.min_height = None;
+            } else {
+                style.min_height = first_length_or_none(&decl.value, style.font_size_px);
+                style.min_height_pct = None;
+            }
+        }
+        "max-width" => {
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.max_width_pct = Some(*p as f32);
+                style.max_width = None;
+            } else {
+                style.max_width = first_length_or_none(&decl.value, style.font_size_px);
+                style.max_width_pct = None;
+            }
+        }
+        "max-height" => {
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.max_height_pct = Some(*p as f32);
+                style.max_height = None;
+            } else {
+                style.max_height = first_length_or_none(&decl.value, style.font_size_px);
+                style.max_height_pct = None;
+            }
+        }
 
         "flex-direction" => {
             if let Some(kw) = first_keyword(&decl.value) {
@@ -1017,12 +1065,60 @@ pub fn apply_declaration(
             }
         }
 
-        "block-size" => style.height = first_length_or_none(&decl.value, style.font_size_px),
-        "inline-size" => style.width = first_length_or_none(&decl.value, style.font_size_px),
-        "min-block-size" => style.min_height = first_length_or_none(&decl.value, style.font_size_px),
-        "min-inline-size" => style.min_width = first_length_or_none(&decl.value, style.font_size_px),
-        "max-block-size" => style.max_height = first_length_or_none(&decl.value, style.font_size_px),
-        "max-inline-size" => style.max_width = first_length_or_none(&decl.value, style.font_size_px),
+        "block-size" => {
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.height_pct = Some(*p as f32);
+                style.height = None;
+            } else {
+                style.height = first_length_or_none(&decl.value, style.font_size_px);
+                style.height_pct = None;
+            }
+        }
+        "inline-size" => {
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.width_pct = Some(*p as f32);
+                style.width = None;
+            } else {
+                style.width = first_length_or_none(&decl.value, style.font_size_px);
+                style.width_pct = None;
+            }
+        }
+        "min-block-size" => {
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.min_height_pct = Some(*p as f32);
+                style.min_height = None;
+            } else {
+                style.min_height = first_length_or_none(&decl.value, style.font_size_px);
+                style.min_height_pct = None;
+            }
+        }
+        "min-inline-size" => {
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.min_width_pct = Some(*p as f32);
+                style.min_width = None;
+            } else {
+                style.min_width = first_length_or_none(&decl.value, style.font_size_px);
+                style.min_width_pct = None;
+            }
+        }
+        "max-block-size" => {
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.max_height_pct = Some(*p as f32);
+                style.max_height = None;
+            } else {
+                style.max_height = first_length_or_none(&decl.value, style.font_size_px);
+                style.max_height_pct = None;
+            }
+        }
+        "max-inline-size" => {
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.max_width_pct = Some(*p as f32);
+                style.max_width = None;
+            } else {
+                style.max_width = first_length_or_none(&decl.value, style.font_size_px);
+                style.max_width_pct = None;
+            }
+        }
 
         "border-top-width" => {
             if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
@@ -1398,6 +1494,16 @@ pub fn apply_declaration(
 
         "box-ordinal-group" | "box-lines" => {}
 
+        "box-shadow" => {
+            if matches!(decl.value.first(), Some(CssValue::None))
+                || matches!(decl.value.first(), Some(CssValue::Keyword(k)) if k == "none")
+            {
+                style.box_shadow.clear();
+            } else if let Some(shadow) = parse_box_shadow(&decl.value, style.color) {
+                style.box_shadow = vec![shadow];
+            }
+        }
+
         // Silently accept properties we parse but don't render yet.
         "outline" | "outline-width" | "outline-style" | "outline-color" | "outline-offset"
         | "transition" | "transition-property" | "transition-duration"
@@ -1413,7 +1519,7 @@ pub fn apply_declaration(
         | "background-image" | "background-position" | "background-repeat"
         | "background-size" | "background-attachment" | "background-origin"
         | "background-clip" | "background-blend-mode"
-        | "box-shadow" | "text-shadow"
+        | "text-shadow"
         | "clip" | "clip-path" | "mask" | "mask-image"
         | "pointer-events" | "touch-action" | "user-select"
         | "resize" | "appearance"
@@ -1793,6 +1899,34 @@ fn apply_edge_shorthand(values: &[CssValue], edges: &mut Edges<f32>, parent_font
     }
 }
 
+fn parse_box_shadow(values: &[CssValue], current_color: Color) -> Option<BoxShadow> {
+    let mut lengths = Vec::new();
+    let mut color = None;
+    let mut inset = false;
+    for v in values {
+        match v {
+            CssValue::Length(val, unit) => lengths.push(resolve_length(*val, unit, 16.0)),
+            CssValue::Number(n) if *n == 0.0 => lengths.push(0.0),
+            CssValue::Color(c) => color = Some(css_color_to_color(c)),
+            CssValue::Keyword(k) if k == "inset" => inset = true,
+            CssValue::Keyword(k) if k == "currentcolor" => color = Some(current_color),
+            _ => {}
+        }
+    }
+    if lengths.len() >= 2 {
+        Some(BoxShadow {
+            offset_x: lengths[0],
+            offset_y: lengths[1],
+            blur: lengths.get(2).copied().unwrap_or(0.0),
+            spread: lengths.get(3).copied().unwrap_or(0.0),
+            color: color.unwrap_or(current_color),
+            inset,
+        })
+    } else {
+        None
+    }
+}
+
 fn apply_border_side_shorthand(values: &[CssValue], side: &mut BorderSide, parent_font_size: f32, current_color: Color) {
     for v in values {
         match v {
@@ -2050,8 +2184,9 @@ mod tests {
         let sheets = vec![(ss, StyleOrigin::Author)];
         let matched = collect_matching_rules(&dom, div, &sheets);
         let style = resolve_style(&dom, div, &matched, None, &mut default_ctx());
-        // 50% of viewport_width (1280) = 640
-        assert_eq!(style.width, Some(640.0));
+        // Percentage stored in width_pct, resolved at layout time
+        assert_eq!(style.width, None);
+        assert_eq!(style.width_pct, Some(50.0));
     }
 
     #[test]
@@ -2061,8 +2196,9 @@ mod tests {
         let sheets = vec![(ss, StyleOrigin::Author)];
         let matched = collect_matching_rules(&dom, div, &sheets);
         let style = resolve_style(&dom, div, &matched, None, &mut default_ctx());
-        // 100% of viewport_height (800) = 800
-        assert_eq!(style.height, Some(800.0));
+        // Percentage stored in height_pct, resolved at layout time
+        assert_eq!(style.height, None);
+        assert_eq!(style.height_pct, Some(100.0));
     }
 
     #[test]
