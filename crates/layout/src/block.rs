@@ -131,6 +131,21 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
         }
     }
 
+    // Separate float children from normal flow.
+    let mut float_children = Vec::new();
+    let mut normal_flow = Vec::new();
+    for &child_id in &flow_children {
+        let is_float = tree.get(child_id)
+            .map(|b| b.computed_style.float != style::Float::None)
+            .unwrap_or(false);
+        if is_float {
+            float_children.push(child_id);
+        } else {
+            normal_flow.push(child_id);
+        }
+    }
+    let flow_children = normal_flow;
+
     // Determine if flow children are all block, all inline, or mixed.
     let has_block_children = flow_children.iter().any(|&c| {
         tree.get(c)
@@ -144,7 +159,7 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
             .unwrap_or(false)
     });
 
-    let content_height;
+    let mut content_height;
 
     if display == style::Display::Flex || display == style::Display::InlineFlex {
         // Delegate to flex layout (handles all children internally).
@@ -166,6 +181,40 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
     } else {
         // Mixed: for simplicity, lay out all sequentially.
         content_height = layout_mixed_children(tree, &flow_children, content_width);
+    }
+
+    // Layout float children alongside content.
+    if !float_children.is_empty() {
+        let mut float_left_x = 0.0f32;
+        let mut float_right_x = content_width;
+        for &child_id in &float_children {
+            let float_avail = (content_width * 0.5).max(0.0);
+            let (_w, h) = layout_block(tree, child_id, float_avail);
+            let float_dir = tree.get(child_id)
+                .map(|b| b.computed_style.float)
+                .unwrap_or(style::Float::None);
+            if let Some(cb) = tree.get_mut(child_id) {
+                let box_w = cb.box_model.border_box.w;
+                let target_x = match float_dir {
+                    style::Float::Left => {
+                        let x = float_left_x;
+                        float_left_x += box_w;
+                        x
+                    }
+                    style::Float::Right => {
+                        float_right_x -= box_w;
+                        float_right_x
+                    }
+                    _ => 0.0,
+                };
+                let dx = target_x - cb.box_model.border_box.x;
+                cb.box_model.content_box.x += dx;
+                cb.box_model.padding_box.x += dx;
+                cb.box_model.border_box.x += dx;
+                cb.box_model.margin_box.x += dx;
+            }
+            content_height = content_height.max(h);
+        }
     }
 
     let final_height = match specified_height {
@@ -641,7 +690,9 @@ pub fn resolve_absolute_positions(
         };
 
         // Apply position:relative visual offset (doesn't affect flow).
-        let (rel_dx, rel_dy) = if b.computed_style.position == style::Position::Relative {
+        let (rel_dx, rel_dy) = if b.computed_style.position == style::Position::Relative
+            || b.computed_style.position == style::Position::Sticky
+        {
             (b.computed_style.left.unwrap_or(0.0), b.computed_style.top.unwrap_or(0.0))
         } else {
             (0.0, 0.0)

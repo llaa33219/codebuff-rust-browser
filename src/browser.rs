@@ -138,6 +138,7 @@ pub struct PageData {
     pub content_height: f32,
     pub title: String,
     pub url: String,
+    pub hovered_node: Option<NodeId>,
 }
 
 
@@ -684,6 +685,7 @@ impl BrowserEngine {
             content_height,
             title,
             url: url.to_string(),
+            hovered_node: None,
         }
     }
 
@@ -1075,24 +1077,35 @@ impl BrowserEngine {
         }
 
         if let Some(tab_id) = self.shell.tab_manager.active_tab_id() {
-            if let Some(page) = self.pages.get(&tab_id) {
-                let doc_x = x as f32;
-                let doc_y = (y as f32 - CHROME_HEIGHT as f32) + page.scroll_y;
+            // Phase 1: immutable borrow for hit testing.
+            let (new_status, new_hovered) = match self.pages.get(&tab_id) {
+                Some(page) => {
+                    let doc_x = x as f32;
+                    let doc_y = (y as f32 - CHROME_HEIGHT as f32) + page.scroll_y;
+                    let result = hittest::hit_test(&page.layout_tree, &page.dom, doc_x, doc_y);
+                    let status = if let Some(link_url) = result.link_url {
+                        resolve_url(&link_url, &page.url)
+                    } else if page.url.starts_with("about:") {
+                        String::new()
+                    } else {
+                        "Done".to_string()
+                    };
+                    (status, result.node_id)
+                }
+                None => return,
+            };
 
-                let result = hittest::hit_test(&page.layout_tree, &page.dom, doc_x, doc_y);
-
-                let new_status = if let Some(link_url) = result.link_url {
-                    resolve_url(&link_url, &page.url)
-                } else if page.url.starts_with("about:") {
-                    String::new()
-                } else {
-                    "Done".to_string()
-                };
-
-                if self.chrome_state.status_text != new_status {
-                    self.chrome_state.status_text = new_status;
+            // Phase 2: mutable borrow to update hover state.
+            if let Some(page) = self.pages.get_mut(&tab_id) {
+                if page.hovered_node != new_hovered {
+                    page.hovered_node = new_hovered;
                     self.needs_render = true;
                 }
+            }
+
+            if self.chrome_state.status_text != new_status {
+                self.chrome_state.status_text = new_status;
+                self.needs_render = true;
             }
         }
     }

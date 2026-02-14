@@ -170,9 +170,16 @@ fn paint_layout_box(tree: &LayoutTree, box_id: LayoutBoxId, list: &mut DisplayLi
 
         // 4. Paint outline (outside the border box).
         paint_outline(layout_box, list);
+
+        // 5. Paint list markers for list-item elements.
+        if layout_box.kind == LayoutBoxKind::Block
+            && layout_box.computed_style.list_style_type != style::ListStyleType::None
+        {
+            paint_list_marker(layout_box, list);
+        }
     }
 
-    // 4. Paint content.
+    // 6. Paint content.
     match layout_box.kind {
         LayoutBoxKind::TextRun => {
             if is_visible {
@@ -587,6 +594,48 @@ fn paint_text(layout_box: &LayoutBox, list: &mut DisplayList) {
             });
         }
         style::TextDecoration::None => {}
+    }
+}
+
+/// Paint list markers (bullets, circles, squares) for list-item elements.
+fn paint_list_marker(layout_box: &LayoutBox, list: &mut DisplayList) {
+    let style = &layout_box.computed_style;
+    let content_box = layout_box.box_model.content_box;
+    let font_size = style.font_size_px;
+    let marker_x = content_box.x - font_size * 1.2;
+    let r = font_size * 0.15;
+    let cx = marker_x + font_size * 0.3;
+    let cy = content_box.y + font_size * 0.55;
+
+    match style.list_style_type {
+        style::ListStyleType::Disc => {
+            list.push(DisplayItem::SolidRect {
+                rect: Rect::new(cx - r, cy - r, r * 2.0, r * 2.0),
+                color: style.color,
+            });
+        }
+        style::ListStyleType::Circle => {
+            let thickness = 1.0f32;
+            list.push(DisplayItem::Border {
+                rect: Rect::new(cx - r, cy - r, r * 2.0, r * 2.0),
+                widths: [thickness; 4],
+                colors: [style.color; 4],
+                styles: [style::BorderStyle::Solid; 4],
+            });
+        }
+        style::ListStyleType::Square => {
+            list.push(DisplayItem::SolidRect {
+                rect: Rect::new(cx - r, cy - r, r * 2.0, r * 2.0),
+                color: style.color,
+            });
+        }
+        style::ListStyleType::Decimal => {
+            list.push(DisplayItem::SolidRect {
+                rect: Rect::new(cx - r, cy - r, r * 2.0, r * 2.0),
+                color: style.color,
+            });
+        }
+        style::ListStyleType::None => {}
     }
 }
 

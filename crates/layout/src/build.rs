@@ -72,6 +72,53 @@ fn build_box(
                 }
             }
 
+            // Generate synthetic text content for form elements.
+            if child_boxes.is_empty() {
+                if let Some(elem) = node.as_element() {
+                    let form_text = match elem.tag_name.as_str() {
+                        "input" => {
+                            let input_type = elem.attrs.iter()
+                                .find(|a| a.name == "type")
+                                .map(|a| a.value.as_str())
+                                .unwrap_or("text");
+                            match input_type {
+                                "submit" | "button" | "reset" => {
+                                    let value = elem.attrs.iter()
+                                        .find(|a| a.name == "value")
+                                        .map(|a| a.value.clone());
+                                    Some(value.unwrap_or_else(|| match input_type {
+                                        "submit" => "Submit".to_string(),
+                                        "reset" => "Reset".to_string(),
+                                        _ => String::new(),
+                                    }))
+                                }
+                                "checkbox" | "radio" | "hidden" | "file" | "image" => None,
+                                _ => {
+                                    elem.attrs.iter().find(|a| a.name == "value")
+                                        .map(|a| a.value.clone())
+                                        .or_else(|| elem.attrs.iter().find(|a| a.name == "placeholder")
+                                            .map(|a| a.value.clone()))
+                                }
+                            }
+                        }
+                        "textarea" => {
+                            elem.attrs.iter().find(|a| a.name == "placeholder")
+                                .map(|a| a.value.clone())
+                        }
+                        "select" => {
+                            Some("\u{25BE}".to_string())
+                        }
+                        _ => None,
+                    };
+                    if let Some(ref text) = form_text {
+                        if !text.is_empty() {
+                            let text_box = LayoutBox::text_run(node_id, text.clone(), style.clone());
+                            child_boxes.push(tree.alloc(text_box));
+                        }
+                    }
+                }
+            }
+
             // Split multi-word text runs into per-word boxes for word wrapping.
             let child_boxes = split_text_run_words(tree, child_boxes);
 
