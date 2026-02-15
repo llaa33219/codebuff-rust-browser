@@ -178,7 +178,7 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
         content_height = specified_height.unwrap_or(0.0);
     } else if has_block_children && !has_inline_children {
         // Pure block formatting context.
-        if table_layout_mode == style::TableLayout::Fixed {
+        if display == style::Display::Table || table_layout_mode == style::TableLayout::Fixed {
             content_height = layout_table_fixed(tree, &flow_children, content_width);
         } else if column_count > 1 {
             content_height = layout_multi_column(tree, &flow_children, content_width, column_count, column_gap);
@@ -400,11 +400,11 @@ fn layout_block_children(
     cursor_y
 }
 
-/// Layout children as table rows with fixed-width cells.
+/// Layout table rows with equal-width cells.
 ///
-/// When `table-layout: fixed` is set, each row's cells get equal width
-/// (containing_width / number_of_cells). This is much faster than auto
-/// table layout since widths don't depend on content.
+/// Used for `display: table` and `table-layout: fixed` elements.
+/// Flattens through row groups (thead/tbody/tfoot) to find actual rows,
+/// then distributes cells horizontally with equal widths.
 fn layout_table_fixed(
     tree: &mut LayoutTree,
     children: &[LayoutBoxId],
@@ -428,45 +428,28 @@ fn layout_table_fixed(
     }
     ordered.extend(bottom_captions);
     let children = &ordered;
-    let mut cursor_y = 0.0f32;
-    for &row_id in children {
-        let row_children = tree.children(row_id);
-        if !row_children.is_empty() {
-            let cell_count = row_children.len() as f32;
-            let cell_width = containing_width / cell_count;
-            let mut max_cell_h = 0.0f32;
 
-            // Layout each cell at its fixed-width slot.
-            for (i, &cell_id) in row_children.iter().enumerate() {
-                let (_w, _h) = layout_block(tree, cell_id, cell_width);
-                if let Some(cb) = tree.get_mut(cell_id) {
-                    let target_x = i as f32 * cell_width;
-                    let dx = target_x - cb.box_model.border_box.x;
-                    let dy = cursor_y - cb.box_model.border_box.y;
-                    cb.box_model.content_box.x += dx;
-                    cb.box_model.content_box.y += dy;
-                    cb.box_model.padding_box.x += dx;
-                    cb.box_model.padding_box.y += dy;
-                    cb.box_model.border_box.x += dx;
-                    cb.box_model.border_box.y += dy;
-                    cb.box_model.margin_box.x += dx;
-                    cb.box_model.margin_box.y += dy;
-                    max_cell_h = max_cell_h.max(cb.box_model.border_box.h);
-                }
-            }
-
-            // Position the row itself.
-            let (_w, row_h) = layout_block(tree, row_id, containing_width);
-            if let Some(rb) = tree.get_mut(row_id) {
-                let dy = cursor_y - rb.box_model.border_box.y;
-                rb.box_model.content_box.y += dy;
-                rb.box_model.padding_box.y += dy;
-                rb.box_model.border_box.y += dy;
-                rb.box_model.margin_box.y += dy;
-            }
-            cursor_y += row_h.max(max_cell_h);
+    // Flatten through row groups (thead/tbody/tfoot) to collect actual rows.
+    let mut rows: Vec<LayoutBoxId> = Vec::new();
+    let mut row_groups: Vec<(LayoutBoxId, usize, usize)> = Vec::new();
+    for &child_id in children {
+        let grandchildren = tree.children(child_id);
+        let has_rows = grandchildren.iter().any(|&gc| tree.children(gc).len() >= 2);
+        if has_rows && !grandchildren.is_empty() {
+            let start = rows.len();
+            rows.extend(grandchildren);
+            row_groups.push((child_id, start, rows.len()));
         } else {
-            // No cells — treat as a regular block child.
+            rows.push(child_id);
+        }
+    }
+
+    let mut cursor_y = 0.0f32;
+    let mut row_bounds: Vec<(f32, f32)> = Vec::new();
+
+    for &row_id in &rows {
+        let cells = tree.children(row_id);
+        if cells.is_empty() {
             let (_w, h) = layout_block(tree, row_id, containing_width);
             if let Some(rb) = tree.get_mut(row_id) {
                 let dy = cursor_y - rb.box_model.border_box.y;
@@ -475,9 +458,60 @@ fn layout_table_fixed(
                 rb.box_model.border_box.y += dy;
                 rb.box_model.margin_box.y += dy;
             }
+            let h = tree.get(row_id).map(|b| b.box_model.border_box.h).unwrap_or(h);
+            row_bounds.push((cursor_y, h));
             cursor_y += h;
+            continue;
+        }
+
+        let n = cells.len() as f32;
+        let cw = containing_width / n;
+        let mut max_h = 0.0f32;
+
+        for (i, &cell_id) in cells.iter().enumerate() {
+            let (_w, _h) = layout_block(tree, cell_id, cw);
+            if let Some(cb) = tree.get_mut(cell_id) {
+                let tx = i as f32 * cw;
+                let dx = tx - cb.box_model.border_box.x;
+                let dy = cursor_y - cb.box_model.border_box.y;
+                cb.box_model.content_box.x += dx;
+                cb.box_model.content_box.y += dy;
+                cb.box_model.padding_box.x += dx;
+                cb.box_model.padding_box.y += dy;
+                cb.box_model.border_box.x += dx;
+                cb.box_model.border_box.y += dy;
+                cb.box_model.margin_box.x += dx;
+                cb.box_model.margin_box.y += dy;
+                max_h = max_h.max(cb.box_model.border_box.h);
+            }
+        }
+
+        // Set row box dimensions.
+        if let Some(rb) = tree.get_mut(row_id) {
+            rb.box_model.content_box = Rect::new(0.0, cursor_y, containing_width, max_h);
+            rb.box_model.padding_box = rb.box_model.content_box;
+            rb.box_model.border_box = rb.box_model.content_box;
+            rb.box_model.margin_box = rb.box_model.content_box;
+        }
+        row_bounds.push((cursor_y, max_h));
+        cursor_y += max_h;
+    }
+
+    // Size row group boxes (thead/tbody/tfoot).
+    for &(gid, s, e) in &row_groups {
+        if s < e && s < row_bounds.len() {
+            let y0 = row_bounds[s].0;
+            let last = (e - 1).min(row_bounds.len() - 1);
+            let y1 = row_bounds[last].0 + row_bounds[last].1;
+            if let Some(gb) = tree.get_mut(gid) {
+                gb.box_model.content_box = Rect::new(0.0, y0, containing_width, y1 - y0);
+                gb.box_model.padding_box = gb.box_model.content_box;
+                gb.box_model.border_box = gb.box_model.content_box;
+                gb.box_model.margin_box = gb.box_model.content_box;
+            }
         }
     }
+
     cursor_y
 }
 

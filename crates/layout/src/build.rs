@@ -168,7 +168,7 @@ fn build_box(
 /// Convert a CSS `Display` value to a `LayoutBoxKind`.
 fn display_to_kind(display: Display) -> LayoutBoxKind {
     match display {
-        Display::Block => LayoutBoxKind::Block,
+        Display::Block | Display::Table => LayoutBoxKind::Block,
         Display::Inline => LayoutBoxKind::Inline,
         Display::InlineBlock => LayoutBoxKind::InlineBlock,
         Display::Flex | Display::InlineFlex => LayoutBoxKind::Flex,

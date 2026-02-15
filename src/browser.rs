@@ -64,6 +64,9 @@ const UA_CSS: &str = "
     body { font-size: 16px; color: #333333; background-color: #ffffff; }
     img { display: inline-block; }
     table { display: table; border-collapse: collapse; }
+    thead, tbody, tfoot { display: table-row-group; }
+    caption { display: table-caption; }
+    colgroup, col { display: none; }
     tr { display: table-row; }
     td, th { display: table-cell; padding: 2px; }
     th { font-weight: bold; text-align: center; }
@@ -1502,10 +1505,80 @@ fn run_js(source: &str) {
 ///
 /// Looks for the first `<title>` element and returns the text content of its
 /// first child text node.
+#[allow(dead_code)]
+fn run_pipeline_test(name: &str, html_source: &str) -> (usize, f32, f32, usize, usize, usize) {
+    let dom = html::parse(html_source);
+    let all_nodes = dom.descendants(DOC_ROOT);
+    let element_count = all_nodes.iter()
+        .filter(|&&n| dom.nodes.get(n).map(|node| node.is_element()).unwrap_or(false))
+        .count();
+    let text_node_count = all_nodes.iter()
+        .filter(|&&n| dom.nodes.get(n).map(|node| node.is_text()).unwrap_or(false))
+        .count();
+
+    let ua_stylesheet = css::parse_stylesheet(UA_CSS);
+    let mut sheets: Vec<(css::Stylesheet, style::StyleOrigin)> = vec![
+        (ua_stylesheet, style::StyleOrigin::UserAgent),
+    ];
+    let style_elements = dom.get_elements_by_tag(DOC_ROOT, "style");
+    for &style_id in &style_elements {
+        let children = dom.children(style_id);
+        for child_id in children {
+            if let Some(node) = dom.nodes.get(child_id) {
+                if let NodeData::Text { data } = &node.data {
+                    let sheet = css::parse_stylesheet(data);
+                    sheets.push((sheet, style::StyleOrigin::Author));
+                }
+            }
+        }
+    }
+
+    let style_map = build_style_map(&dom, DOC_ROOT, &sheets, 1280.0, 800.0);
+    let mut layout_tree = layout::build_layout_tree(&dom, DOC_ROOT, &style_map);
+
+    let (w, h) = if let Some(root_id) = layout_tree.root {
+        layout::layout_block(&mut layout_tree, root_id, 1280.0)
+    } else {
+        (0.0, 0.0)
+    };
+
+    if let Some(root_id) = layout_tree.root {
+        layout::resolve_absolute_positions(&mut layout_tree, root_id, 0.0, 0.0);
+    }
+
+    let display_list = paint::build_display_list(&layout_tree);
+    let rect_count = display_list.iter().filter(|i| matches!(i, DisplayItem::SolidRect { .. })).count();
+    let text_count = display_list.iter().filter(|i| matches!(i, DisplayItem::TextRun { .. })).count();
+    let border_count = display_list.iter().filter(|i| matches!(i, DisplayItem::Border { .. })).count();
+
+    eprintln!("  {} → {}elem {}text → {:.0}×{:.0} → {}items ({}rect {}text {}bdr)",
+        name, element_count, text_node_count, w, h, display_list.len(), rect_count, text_count, border_count);
+
+    // Sanity checks
+    if h <= 0.0 && text_node_count > 0 {
+        eprintln!("    ⚠ ISSUE: Content height is 0 but there are {} text nodes!", text_node_count);
+    }
+    if text_node_count > 0 && text_count == 0 {
+        eprintln!("    ⚠ ISSUE: HTML has text nodes but no TextRun display items!");
+    }
+    let mut zero_text = 0;
+    for item in &display_list {
+        if let DisplayItem::TextRun { rect, .. } = item {
+            if rect.w <= 0.0 || rect.h <= 0.0 {
+                zero_text += 1;
+            }
+        }
+    }
+    if zero_text > 0 {
+        eprintln!("    ⚠ ISSUE: {} text runs have zero/negative dimensions!", zero_text);
+    }
+
+    (element_count, w, h, rect_count, text_count, border_count)
+}
+
 fn extract_title(dom: &Dom, doc_root: NodeId) -> String {
     let title_elements = dom.get_elements_by_tag(doc_root, "title");
     if let Some(&title_node) = title_elements.first() {
-        // Get the first text child
         let children = dom.children(title_node);
         for child_id in children {
             if let Some(node) = dom.nodes.get(child_id) {
@@ -1516,4 +1589,162 @@ fn extract_title(dom: &Dom, doc_root: NodeId) -> String {
         }
     }
     String::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_example_com() {
+        let html = r#"<!doctype html><html lang="en"><head><title>Example Domain</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{background:#eee;width:60vw;margin:15vh auto;font-family:system-ui,sans-serif}h1{font-size:1.5em}div{opacity:0.8}a:link,a:visited{color:#348}</style></head><body><div><h1>Example Domain</h1><p>This domain is for use in documentation examples.</p><p><a href="https://iana.org/domains/example">Learn more</a></p></div></body></html>"#;
+        let (elems, _w, h, _rects, texts, _borders) = run_pipeline_test("example.com", html);
+        assert!(elems > 0);
+        assert!(h > 0.0, "Content height should be > 0");
+        assert!(texts > 0, "Should have text runs");
+    }
+
+    #[test]
+    fn test_flexbox_layout() {
+        let html = r#"<html><head><style>.flex{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:20px}.item{flex:1;background:#e0e0e0;padding:16px;text-align:center;border-radius:8px}</style></head><body><div class="flex"><div class="item">Item 1</div><div class="item">Item 2</div><div class="item">Item 3</div></div></body></html>"#;
+        let (_, _w, h, _rects, texts, _) = run_pipeline_test("flexbox", html);
+        assert!(h > 0.0);
+        assert!(texts >= 3, "Should have 3 text items, got {}", texts);
+    }
+
+    #[test]
+    fn test_grid_layout() {
+        let html = r#"<html><head><style>.grid{display:grid;grid-template-columns:1fr 2fr 1fr;gap:10px;padding:20px}.cell{background:#ddd;padding:10px}</style></head><body><div class="grid"><div class="cell">A</div><div class="cell">B</div><div class="cell">C</div><div class="cell">D</div><div class="cell">E</div><div class="cell">F</div></div></body></html>"#;
+        let (_, _, h, _, texts, _) = run_pipeline_test("grid", html);
+        assert!(h > 0.0);
+        assert!(texts >= 6, "Should have 6 grid cells, got {}", texts);
+    }
+
+    #[test]
+    fn test_table_layout() {
+        let html = r#"<html><head><style>table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:8px;text-align:left}th{background:#f5f5f5}</style></head><body><table><thead><tr><th>Name</th><th>Age</th><th>City</th></tr></thead><tbody><tr><td>Alice</td><td>30</td><td>NYC</td></tr><tr><td>Bob</td><td>25</td><td>LA</td></tr></tbody></table></body></html>"#;
+        let (_, _, h, _, texts, _) = run_pipeline_test("table", html);
+        assert!(h > 0.0, "Table should have height");
+        assert!(texts > 0, "Table text should be rendered");
+    }
+
+    #[test]
+    fn test_forms() {
+        let html = r#"<html><head><style>input{display:block;width:100%;padding:8px;border:1px solid #ccc}button{background:#1a73e8;color:white;padding:10px 20px;border:none}</style></head><body><form><label>Name</label><input type="text" placeholder="Enter name"><button>Submit</button></form></body></html>"#;
+        let (_, _, h, _, _, _) = run_pipeline_test("forms", html);
+        assert!(h > 0.0);
+    }
+
+    #[test]
+    fn test_complex_site_layout() {
+        let html = r#"<html><head><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:sans-serif;color:#333;background:#fff}.header{background:#1a73e8;color:white;padding:16px 24px;display:flex;align-items:center;justify-content:space-between}.nav{display:flex;gap:16px}.nav a{color:white;text-decoration:none}.main{display:flex;min-height:80vh}.sidebar{width:240px;background:#f5f5f5;padding:16px;border-right:1px solid #e0e0e0}.content{flex:1;padding:24px}.card{background:white;border:1px solid #e0e0e0;border-radius:8px;padding:16px;margin-bottom:16px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}.footer{background:#333;color:#aaa;padding:16px 24px;text-align:center;font-size:14px}</style></head><body><div class="header"><h1>My Site</h1><nav class="nav"><a href="/">Home</a><a href="/about">About</a><a href="/contact">Contact</a></nav></div><div class="main"><aside class="sidebar"><h3>Menu</h3><ul><li>Item 1</li><li>Item 2</li><li>Item 3</li></ul></aside><main class="content"><div class="card"><h2>Welcome</h2><p>This is a complex layout test with header, sidebar, content area, and footer.</p></div><div class="card"><h2>Features</h2><p>Testing nested flexbox, cards with shadow, and multi-column layout.</p></div></main></div><div class="footer">Footer content</div></body></html>"#;
+        let (_, _, h, rects, texts, borders) = run_pipeline_test("complex-layout", html);
+        assert!(h > 0.0);
+        assert!(texts > 5, "Should have many text items");
+        assert!(rects > 0, "Should have background rects");
+    }
+
+    #[test]
+    fn test_inline_styles() {
+        let html = r#"<html><body><div style="color:red;font-size:24px;background:yellow;padding:16px;margin:8px;border:2px solid green">Inline styled</div><p style="font-weight:bold;text-align:center">Bold centered</p></body></html>"#;
+        let (_, _, h, _, texts, _) = run_pipeline_test("inline-styles", html);
+        assert!(texts > 0);
+        assert!(h > 0.0);
+    }
+
+    #[test]
+    fn test_viewport_units() {
+        let html = r#"<html><head><style>body{margin:10vh 5vw;font-size:2rem}.box{width:50vw;height:30vh;background:#ccc}</style></head><body><div class="box">Viewport units test</div></body></html>"#;
+        let (_, _, h, _, texts, _) = run_pipeline_test("viewport-units", html);
+        assert!(h > 0.0, "Viewport units should produce height");
+        assert!(texts > 0);
+    }
+
+    #[test]
+    fn test_shorthand_properties() {
+        let html = r#"<html><head><style>.box{margin:10px 20px 30px 40px;padding:5px 10px;border:2px solid red;background:#f0f0f0;overflow:hidden}.rounded{border-radius:50%;width:100px;height:100px;background:blue}</style></head><body><div class="box">Shorthand test</div><div class="rounded"></div></body></html>"#;
+        let (_, _, h, rects, texts, borders) = run_pipeline_test("shorthands", html);
+        assert!(h > 0.0);
+        assert!(rects > 0, "Should have background rects");
+        assert!(borders > 0, "Should have borders from shorthand");
+    }
+
+    #[test]
+    fn test_nested_lists() {
+        let html = r#"<html><body><ul><li>First<ul><li>Sub 1</li><li>Sub 2</li></ul></li><li>Second</li></ul><ol><li>One</li><li>Two</li><li>Three</li></ol></body></html>"#;
+        let (_, _, h, _, texts, _) = run_pipeline_test("nested-lists", html);
+        assert!(h > 0.0);
+        assert!(texts >= 7, "Should have all list item texts, got {}", texts);
+    }
+
+    #[test]
+    fn test_deep_nesting() {
+        let html = r#"<html><body><div><div><div><div><div><p>Deep nested text</p></div></div></div></div></div></body></html>"#;
+        let (_, _, h, _, texts, _) = run_pipeline_test("deep-nesting", html);
+        assert!(h > 0.0);
+        assert!(texts > 0);
+    }
+
+    #[test]
+    fn test_homepage() {
+        let html = default_homepage_html();
+        let (_, _, h, rects, texts, _) = run_pipeline_test("homepage", html);
+        assert!(h > 0.0);
+        assert!(texts > 5, "Homepage should have many text items");
+        assert!(rects > 0, "Homepage should have backgrounds");
+    }
+
+    #[test]
+    fn test_error_page() {
+        let html = error_page_html("https://fail.test", "Connection refused");
+        let (_, _, h, _, texts, _) = run_pipeline_test("error-page", &html);
+        assert!(h > 0.0);
+        assert!(texts > 0);
+    }
+
+    #[test]
+    fn test_empty_elements() {
+        let html = r#"<html><body><div></div><p></p><span></span><br><hr><img src=""></body></html>"#;
+        let (_, _, _h, _, _, _) = run_pipeline_test("empty-elements", html);
+    }
+
+    #[test]
+    fn test_special_chars() {
+        let html = r#"<html><body><p>Special chars: &amp; &lt; &gt; &quot; &#39; &#x2603;</p><p>Unicode: 日本語 한국어 中文 العربية</p></body></html>"#;
+        let (_, _, h, _, texts, _) = run_pipeline_test("special-chars", html);
+        assert!(h > 0.0);
+        assert!(texts > 0);
+    }
+
+    #[test]
+    fn test_css_variables() {
+        let html = r#"<html><head><style>:root{--primary:#1a73e8;--bg:#f5f5f5}.box{color:var(--primary);background:var(--bg);padding:16px}</style></head><body><div class="box">CSS Variables test</div></body></html>"#;
+        let (_, _, h, _, texts, _) = run_pipeline_test("css-variables", html);
+        assert!(h > 0.0);
+        assert!(texts > 0);
+    }
+
+    #[test]
+    fn test_media_site_pattern() {
+        let html = r#"<html><head><style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: sans-serif; background: #f9f9f9; }
+            .article { max-width: 680px; margin: 0 auto; padding: 32px 20px; background: white; }
+            .article h1 { font-size: 28px; line-height: 1.3; margin-bottom: 8px; }
+            .article .meta { color: #999; font-size: 14px; margin-bottom: 24px; }
+            .article p { font-size: 16px; line-height: 1.7; margin-bottom: 16px; color: #333; }
+            .article blockquote { border-left: 3px solid #1a73e8; padding: 8px 16px; margin: 16px 0; background: #f5f8ff; color: #555; }
+        </style></head><body>
+            <article class="article">
+                <h1>Breaking News: Rust Browser Engine Now Renders Real Sites</h1>
+                <p class="meta">By Developer • 5 min read</p>
+                <p>A from-scratch browser engine written entirely in Rust with zero external dependencies can now render real websites.</p>
+                <blockquote>This is a remarkable achievement in systems programming.</blockquote>
+                <p>The engine includes HTML5 parsing, CSS3 cascade, block/inline/flex/grid layout, JavaScript execution, TLS 1.3, and more.</p>
+            </article>
+        </body></html>"#;
+        let (_, _, h, rects, texts, _) = run_pipeline_test("media-site", html);
+        assert!(h > 100.0, "Article should have substantial height, got {}", h);
+        assert!(texts >= 4, "Should have article text, got {}", texts);
+    }
 }

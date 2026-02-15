@@ -496,7 +496,8 @@ pub fn apply_declaration(
                     "grid" => Display::Grid,
                     "inline-grid" => Display::InlineGrid,
                     "list-item" => Display::Block,
-                    "table" | "table-row-group" | "table-header-group"
+                    "table" => Display::Table,
+                    "table-row-group" | "table-header-group"
                     | "table-footer-group" | "table-column"
                     | "table-column-group" | "table-caption" => Display::Block,
                     "table-row" => Display::Block,

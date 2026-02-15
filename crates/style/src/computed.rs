@@ -16,12 +16,13 @@ pub enum Display {
     InlineFlex,
     Grid,
     InlineGrid,
+    Table,
 }
 
 impl Display {
     /// Returns `true` if this display value generates a block-level box.
     pub fn is_block_level(self) -> bool {
-        matches!(self, Display::Block | Display::Flex | Display::Grid)
+        matches!(self, Display::Block | Display::Flex | Display::Grid | Display::Table)
     }
 
     /// Returns `true` if this display value generates an inline-level box.
