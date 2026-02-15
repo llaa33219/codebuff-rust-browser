@@ -1306,17 +1306,35 @@ pub fn apply_declaration(
         "flex" => {
             // flex shorthand: <grow> [<shrink>] [<basis>]
             let mut nums = Vec::new();
+            let mut has_basis = false;
             for v in &decl.value {
                 match v {
                     CssValue::Number(n) => nums.push(*n as f32),
                     CssValue::Length(val, unit) => {
                         style.flex.basis = Some(resolve_length(*val, unit, style.font_size_px));
+                        has_basis = true;
                     }
-                    CssValue::Keyword(k) if k == "auto" => { style.flex.basis = None; }
+                    CssValue::Percentage(p) => {
+                        style.flex.basis = Some(*p as f32);
+                        has_basis = true;
+                    }
+                    CssValue::Keyword(k) if k == "auto" => {
+                        style.flex.grow = 1.0;
+                        style.flex.shrink = 1.0;
+                        style.flex.basis = None;
+                        has_basis = true;
+                    }
+                    CssValue::Auto => {
+                        style.flex.grow = 1.0;
+                        style.flex.shrink = 1.0;
+                        style.flex.basis = None;
+                        has_basis = true;
+                    }
                     CssValue::None => {
                         style.flex.grow = 0.0;
                         style.flex.shrink = 0.0;
                         style.flex.basis = None;
+                        has_basis = true;
                     }
                     _ => {}
                 }
@@ -1326,6 +1344,11 @@ pub fn apply_declaration(
             }
             if nums.len() >= 2 {
                 style.flex.shrink = nums[1];
+            }
+            // Per CSS spec, `flex: <number>` (without explicit basis) means
+            // basis = 0, not auto. E.g. `flex: 1` = `flex: 1 1 0`.
+            if !nums.is_empty() && !has_basis {
+                style.flex.basis = Some(0.0);
             }
         }
 
@@ -2673,6 +2696,13 @@ fn collect_lengths(values: &[CssValue], parent_font_size: f32) -> Vec<f32> {
                 result.push(resolve_length(*val, unit, parent_font_size));
             }
             CssValue::Number(n) if *n == 0.0 => result.push(0.0),
+            CssValue::Percentage(p) => result.push(*p as f32),
+            CssValue::Keyword(kw) => match kw.as_str() {
+                "thin" => result.push(1.0),
+                "medium" => result.push(3.0),
+                "thick" => result.push(5.0),
+                _ => {}
+            },
             _ => {}
         }
     }

@@ -271,6 +271,16 @@ fn split_text_run_words(tree: &mut LayoutTree, children: Vec<LayoutBoxId>) -> Ve
 
         match info {
             Some((LayoutBoxKind::TextRun, Some(node_id), Some(ref text), ref style)) => {
+                // Don't split text runs when white-space preserves spaces
+                // (pre, pre-wrap), as split_whitespace would destroy them.
+                let preserves_whitespace = matches!(
+                    style.white_space,
+                    style::WhiteSpace::Pre | style::WhiteSpace::PreWrap | style::WhiteSpace::PreLine
+                );
+                if preserves_whitespace {
+                    result.push(child_id);
+                    continue;
+                }
                 let words: Vec<&str> = text.split_whitespace().collect();
                 if words.len() <= 1 {
                     result.push(child_id);

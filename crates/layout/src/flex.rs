@@ -162,16 +162,27 @@ pub fn layout_flex(tree: &mut LayoutTree, container_id: LayoutBoxId, available_w
 
     // Step 5: Recursively layout each item's children and determine cross sizes.
     for item in &mut items {
-        if !is_row {
+        let orig_height = if !is_row {
+            let oh = tree.get(item.box_id).map(|b| b.computed_style.height);
             if let Some(b) = tree.get_mut(item.box_id) {
                 if b.computed_style.height.is_none() {
                     b.computed_style.height = Some(item.main_size);
                 }
             }
-        }
+            oh
+        } else {
+            None
+        };
 
         let item_available = if is_row { item.main_size } else { available_width };
         layout_block(tree, item.box_id, item_available);
+
+        // Restore the original height so we don't permanently mutate the style.
+        if let Some(oh) = orig_height {
+            if let Some(b) = tree.get_mut(item.box_id) {
+                b.computed_style.height = oh;
+            }
+        }
 
         if let Some(b) = tree.get(item.box_id) {
             if is_row {
