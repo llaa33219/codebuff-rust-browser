@@ -207,6 +207,7 @@ pub struct FlexStyle {
     pub grow: f32,
     pub shrink: f32,
     pub basis: Option<f32>,
+    pub basis_pct: Option<f32>,
 }
 
 impl Default for FlexStyle {
@@ -219,6 +220,7 @@ impl Default for FlexStyle {
             grow: 0.0,
             shrink: 1.0,
             basis: None,
+            basis_pct: None,
         }
     }
 }
@@ -1006,6 +1008,7 @@ pub struct ComputedStyle {
     pub padding: Edges<f32>,
     pub border: Edges<BorderSide>,
     pub border_radius: [f32; 4],
+    pub border_radius_pct: [Option<f32>; 4],
 
     // -- Sizing --
     pub width: Option<f32>,
@@ -1105,6 +1108,8 @@ pub struct ComputedStyle {
     pub background_size: BackgroundSize,
     pub background_position_x: f32,
     pub background_position_y: f32,
+    pub background_position_x_is_pct: bool,
+    pub background_position_y_is_pct: bool,
 
     // -- Outline --
     pub outline_width: f32,
@@ -1191,6 +1196,7 @@ impl Default for ComputedStyle {
                 left: BorderSide::default(),
             },
             border_radius: [0.0; 4],
+            border_radius_pct: [None; 4],
 
             width: None,
             height: None,
@@ -1270,6 +1276,8 @@ impl Default for ComputedStyle {
             background_size: BackgroundSize::Auto,
             background_position_x: 0.0,
             background_position_y: 0.0,
+            background_position_x_is_pct: true,
+            background_position_y_is_pct: true,
 
             outline_width: 0.0,
             outline_style: BorderStyle::None,
@@ -1444,5 +1452,6 @@ mod tests {
         assert_eq!(f.grow, 0.0);
         assert_eq!(f.shrink, 1.0);
         assert_eq!(f.basis, None);
+        assert_eq!(f.basis_pct, None);
     }
 }

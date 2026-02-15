@@ -399,11 +399,22 @@ fn apply_blend_mode(base: Color, blend: Color, mode: style::MixBlendMode) -> Col
     )
 }
 
+/// Resolve border radii, converting percentage values to pixels based on the border box.
+fn resolve_border_radii(radii: &[f32; 4], pct: &[Option<f32>; 4], rect: Rect) -> [f32; 4] {
+    let base = rect.w.min(rect.h);
+    [
+        pct[0].map(|p| p / 100.0 * base).unwrap_or(radii[0]),
+        pct[1].map(|p| p / 100.0 * base).unwrap_or(radii[1]),
+        pct[2].map(|p| p / 100.0 * base).unwrap_or(radii[2]),
+        pct[3].map(|p| p / 100.0 * base).unwrap_or(radii[3]),
+    ]
+}
+
 /// Paint the background color and image of a box.
 fn paint_background(layout_box: &LayoutBox, list: &mut DisplayList) {
     let style = &layout_box.computed_style;
     let border_box = layout_box.box_model.border_box;
-    let radii = style.border_radius;
+    let radii = resolve_border_radii(&style.border_radius, &style.border_radius_pct, border_box);
     let has_radius = radii.iter().any(|&r| r > 0.0);
 
     let mut color = style.background_color;
@@ -435,8 +446,16 @@ fn paint_background(layout_box: &LayoutBox, list: &mut DisplayList) {
 
     if let style::BackgroundImage::LinearGradient { angle_deg, ref stops } = style.background_image {
         let grad_stops: Vec<(f32, Color)> = stops.iter().map(|s| (s.position, s.color)).collect();
-        let offset_x = style.background_position_x / 100.0 * border_box.w;
-        let offset_y = style.background_position_y / 100.0 * border_box.h;
+        let offset_x = if style.background_position_x_is_pct {
+            style.background_position_x / 100.0 * border_box.w
+        } else {
+            style.background_position_x
+        };
+        let offset_y = if style.background_position_y_is_pct {
+            style.background_position_y / 100.0 * border_box.h
+        } else {
+            style.background_position_y
+        };
         let (grad_w, grad_h) = match style.background_size {
             style::BackgroundSize::Explicit(w, h) => (w, h),
             _ => (border_box.w, border_box.h),

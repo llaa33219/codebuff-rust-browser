@@ -79,13 +79,17 @@ pub fn layout_flex(tree: &mut LayoutTree, container_id: LayoutBoxId, available_w
                 None => continue,
             };
             let s = &b.computed_style;
-            let basis = s.flex.basis.unwrap_or_else(|| {
-                if is_row {
-                    s.width.unwrap_or(content_estimate)
-                } else {
-                    s.height.unwrap_or(s.line_height_px)
-                }
-            });
+            let basis = s.flex.basis
+                .or_else(|| s.flex.basis_pct.map(|p| p / 100.0 * container_main_size))
+                .unwrap_or_else(|| {
+                    if is_row {
+                        s.width
+                            .or_else(|| s.width_pct.map(|p| p / 100.0 * available_width))
+                            .unwrap_or(content_estimate)
+                    } else {
+                        s.height.unwrap_or(s.line_height_px)
+                    }
+                });
             (basis, s.flex.grow, s.flex.shrink)
         };
 
@@ -272,6 +276,15 @@ pub fn layout_flex(tree: &mut LayoutTree, container_id: LayoutBoxId, available_w
                 style::AlignSelf::Baseline => AlignItems::Baseline,
                 style::AlignSelf::Stretch => AlignItems::Stretch,
             };
+            let has_explicit_cross = tree.get(item.box_id)
+                .map(|b| {
+                    if is_row {
+                        b.computed_style.height.is_some() || b.computed_style.height_pct.is_some()
+                    } else {
+                        b.computed_style.width.is_some() || b.computed_style.width_pct.is_some()
+                    }
+                })
+                .unwrap_or(false);
             let aligned_cross = match resolved_align {
                 AlignItems::FlexStart => 0.0,
                 AlignItems::FlexEnd => line_cross - item.cross_size,
@@ -298,7 +311,7 @@ pub fn layout_flex(tree: &mut LayoutTree, container_id: LayoutBoxId, available_w
                 b.box_model.margin_box.x += dx;
                 b.box_model.margin_box.y += dy;
 
-                if resolved_align == AlignItems::Stretch {
+                if resolved_align == AlignItems::Stretch && !has_explicit_cross {
                     if is_row {
                         let dh = line_cross - b.box_model.border_box.h;
                         if dh > 0.0 {

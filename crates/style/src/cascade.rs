@@ -949,7 +949,13 @@ pub fn apply_declaration(
         }
 
         "flex-basis" => {
-            style.flex.basis = first_length_or_none(&decl.value, style.font_size_px);
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.flex.basis_pct = Some(*p as f32);
+                style.flex.basis = None;
+            } else {
+                style.flex.basis = first_length_or_none(&decl.value, style.font_size_px);
+                style.flex.basis_pct = None;
+            }
         }
 
         "z-index" => {
@@ -1115,33 +1121,80 @@ pub fn apply_declaration(
         }
 
         "border-radius" => {
-            let vals = collect_lengths(&decl.value, style.font_size_px);
-            match vals.len() {
-                1 => style.border_radius = [vals[0]; 4],
-                2 => style.border_radius = [vals[0], vals[1], vals[0], vals[1]],
-                3 => style.border_radius = [vals[0], vals[1], vals[2], vals[1]],
-                4 => style.border_radius = [vals[0], vals[1], vals[2], vals[3]],
+            let mut px_vals = Vec::new();
+            let mut pct_vals = Vec::new();
+            for v in &decl.value {
+                match v {
+                    CssValue::Length(val, unit) => {
+                        px_vals.push(resolve_length(*val, unit, style.font_size_px));
+                        pct_vals.push(None);
+                    }
+                    CssValue::Number(n) if *n == 0.0 => {
+                        px_vals.push(0.0);
+                        pct_vals.push(None);
+                    }
+                    CssValue::Percentage(p) => {
+                        px_vals.push(0.0);
+                        pct_vals.push(Some(*p as f32));
+                    }
+                    CssValue::Keyword(_) => {}
+                    _ => {}
+                }
+            }
+            match px_vals.len() {
+                1 => {
+                    style.border_radius = [px_vals[0]; 4];
+                    style.border_radius_pct = [pct_vals[0]; 4];
+                }
+                2 => {
+                    style.border_radius = [px_vals[0], px_vals[1], px_vals[0], px_vals[1]];
+                    style.border_radius_pct = [pct_vals[0], pct_vals[1], pct_vals[0], pct_vals[1]];
+                }
+                3 => {
+                    style.border_radius = [px_vals[0], px_vals[1], px_vals[2], px_vals[1]];
+                    style.border_radius_pct = [pct_vals[0], pct_vals[1], pct_vals[2], pct_vals[1]];
+                }
+                4 => {
+                    style.border_radius = [px_vals[0], px_vals[1], px_vals[2], px_vals[3]];
+                    style.border_radius_pct = [pct_vals[0], pct_vals[1], pct_vals[2], pct_vals[3]];
+                }
                 _ => {}
             }
         }
         "border-top-left-radius" => {
-            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.border_radius[0] = 0.0;
+                style.border_radius_pct[0] = Some(*p as f32);
+            } else if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
                 style.border_radius[0] = v;
+                style.border_radius_pct[0] = None;
             }
         }
         "border-top-right-radius" => {
-            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.border_radius[1] = 0.0;
+                style.border_radius_pct[1] = Some(*p as f32);
+            } else if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
                 style.border_radius[1] = v;
+                style.border_radius_pct[1] = None;
             }
         }
         "border-bottom-right-radius" => {
-            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.border_radius[2] = 0.0;
+                style.border_radius_pct[2] = Some(*p as f32);
+            } else if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
                 style.border_radius[2] = v;
+                style.border_radius_pct[2] = None;
             }
         }
         "border-bottom-left-radius" => {
-            if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
+            if let Some(CssValue::Percentage(p)) = decl.value.first() {
+                style.border_radius[3] = 0.0;
+                style.border_radius_pct[3] = Some(*p as f32);
+            } else if let Some(v) = first_length_px(&decl.value, style.font_size_px) {
                 style.border_radius[3] = v;
+                style.border_radius_pct[3] = None;
             }
         }
 
@@ -1387,28 +1440,33 @@ pub fn apply_declaration(
                     CssValue::Number(n) => nums.push(*n as f32),
                     CssValue::Length(val, unit) => {
                         style.flex.basis = Some(resolve_length(*val, unit, style.font_size_px));
+                        style.flex.basis_pct = None;
                         has_basis = true;
                     }
                     CssValue::Percentage(p) => {
-                        style.flex.basis = Some(*p as f32);
+                        style.flex.basis_pct = Some(*p as f32);
+                        style.flex.basis = None;
                         has_basis = true;
                     }
                     CssValue::Keyword(k) if k == "auto" => {
                         style.flex.grow = 1.0;
                         style.flex.shrink = 1.0;
                         style.flex.basis = None;
+                        style.flex.basis_pct = None;
                         has_basis = true;
                     }
                     CssValue::Auto => {
                         style.flex.grow = 1.0;
                         style.flex.shrink = 1.0;
                         style.flex.basis = None;
+                        style.flex.basis_pct = None;
                         has_basis = true;
                     }
                     CssValue::None => {
                         style.flex.grow = 0.0;
                         style.flex.shrink = 0.0;
                         style.flex.basis = None;
+                        style.flex.basis_pct = None;
                         has_basis = true;
                     }
                     _ => {}
@@ -1424,6 +1482,7 @@ pub fn apply_declaration(
             // basis = 0, not auto. E.g. `flex: 1` = `flex: 1 1 0`.
             if !nums.is_empty() && !has_basis {
                 style.flex.basis = Some(0.0);
+                style.flex.basis_pct = None;
             }
         }
 
@@ -1795,26 +1854,44 @@ pub fn apply_declaration(
                 match v {
                     CssValue::Length(val, unit) => {
                         let px = resolve_length(*val, unit, style.font_size_px);
-                        if !x_set { style.background_position_x = px; x_set = true; }
-                        else { style.background_position_y = px; }
+                        if !x_set {
+                            style.background_position_x = px;
+                            style.background_position_x_is_pct = false;
+                            x_set = true;
+                        } else {
+                            style.background_position_y = px;
+                            style.background_position_y_is_pct = false;
+                        }
                     }
                     CssValue::Percentage(p) => {
-                        if !x_set { style.background_position_x = *p as f32; x_set = true; }
-                        else { style.background_position_y = *p as f32; }
+                        if !x_set {
+                            style.background_position_x = *p as f32;
+                            style.background_position_x_is_pct = true;
+                            x_set = true;
+                        } else {
+                            style.background_position_y = *p as f32;
+                            style.background_position_y_is_pct = true;
+                        }
                     }
                     CssValue::Number(n) if *n == 0.0 => {
                         if !x_set { style.background_position_x = 0.0; x_set = true; }
                         else { style.background_position_y = 0.0; }
                     }
                     CssValue::Keyword(kw) => match kw.as_str() {
-                        "left" => { style.background_position_x = 0.0; x_set = true; }
-                        "right" => { style.background_position_x = 100.0; x_set = true; }
+                        "left" => { style.background_position_x = 0.0; style.background_position_x_is_pct = true; x_set = true; }
+                        "right" => { style.background_position_x = 100.0; style.background_position_x_is_pct = true; x_set = true; }
                         "center" => {
-                            if !x_set { style.background_position_x = 50.0; x_set = true; }
-                            else { style.background_position_y = 50.0; }
+                            if !x_set {
+                                style.background_position_x = 50.0;
+                                style.background_position_x_is_pct = true;
+                                x_set = true;
+                            } else {
+                                style.background_position_y = 50.0;
+                                style.background_position_y_is_pct = true;
+                            }
                         }
-                        "top" => { style.background_position_y = 0.0; }
-                        "bottom" => { style.background_position_y = 100.0; }
+                        "top" => { style.background_position_y = 0.0; style.background_position_y_is_pct = true; }
+                        "bottom" => { style.background_position_y = 100.0; style.background_position_y_is_pct = true; }
                         _ => {}
                     },
                     _ => {}
@@ -2518,7 +2595,7 @@ fn apply_initial(style: &mut ComputedStyle, prop: &str) {
         "box-sizing" => style.box_sizing = def.box_sizing,
         "margin" => style.margin = def.margin,
         "padding" => style.padding = def.padding,
-        "border-radius" => style.border_radius = def.border_radius,
+        "border-radius" => { style.border_radius = def.border_radius; style.border_radius_pct = def.border_radius_pct; }
         "opacity" => style.opacity = def.opacity,
         "z-index" => style.z_index = def.z_index,
         "cursor" => style.cursor = def.cursor,
@@ -2542,7 +2619,7 @@ fn apply_initial(style: &mut ComputedStyle, prop: &str) {
         "empty-cells" => style.empty_cells = def.empty_cells,
         "background-repeat" => style.background_repeat = def.background_repeat,
         "background-size" => style.background_size = def.background_size,
-        "background-position" => { style.background_position_x = def.background_position_x; style.background_position_y = def.background_position_y; }
+        "background-position" => { style.background_position_x = def.background_position_x; style.background_position_y = def.background_position_y; style.background_position_x_is_pct = def.background_position_x_is_pct; style.background_position_y_is_pct = def.background_position_y_is_pct; }
         "outline" => { style.outline_width = def.outline_width; style.outline_style = def.outline_style; style.outline_color = def.outline_color; style.outline_offset = def.outline_offset; }
         "outline-width" => style.outline_width = def.outline_width,
         "outline-style" => style.outline_style = def.outline_style,

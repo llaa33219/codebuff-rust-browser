@@ -332,7 +332,73 @@ fn layout_absolute_child(
         }
     };
 
+    // When both left+right are set with no explicit width, stretch to fill.
+    // Same for top+bottom with no explicit height.
+    let (orig_width, orig_height, stretch_w, stretch_h) = {
+        match tree.get(child_id) {
+            Some(b) => {
+                let s = &b.computed_style;
+                let has_width = s.width.is_some() || s.width_pct.is_some();
+                let has_height = s.height.is_some() || s.height_pct.is_some();
+                let pad_h = s.padding.left + s.padding.right;
+                let brd_h = s.border_widths().left + s.border_widths().right;
+                let pad_v = s.padding.top + s.padding.bottom;
+                let brd_v = s.border_widths().top + s.border_widths().bottom;
+                let mar_l = if s.margin.left.is_infinite() { 0.0 } else { s.margin.left };
+                let mar_r = if s.margin.right.is_infinite() { 0.0 } else { s.margin.right };
+                let mar_t = if s.margin.top.is_infinite() { 0.0 } else { s.margin.top };
+                let mar_b = if s.margin.bottom.is_infinite() { 0.0 } else { s.margin.bottom };
+
+                let sw = if !has_width {
+                    if let (Some(l), Some(r)) = (left, right) {
+                        if s.box_sizing == style::BoxSizing::BorderBox {
+                            Some((containing_width - l - r - mar_l - mar_r).max(0.0))
+                        } else {
+                            Some((containing_width - l - r - mar_l - mar_r - pad_h - brd_h).max(0.0))
+                        }
+                    } else { None }
+                } else { None };
+
+                let sh = if !has_height {
+                    if let (Some(t), Some(bt)) = (top, bottom) {
+                        if s.box_sizing == style::BoxSizing::BorderBox {
+                            Some((containing_height - t - bt - mar_t - mar_b).max(0.0))
+                        } else {
+                            Some((containing_height - t - bt - mar_t - mar_b - pad_v - brd_v).max(0.0))
+                        }
+                    } else { None }
+                } else { None };
+
+                (s.width, s.height, sw, sh)
+            }
+            None => (None, None, None, None),
+        }
+    };
+
+    if let Some(w) = stretch_w {
+        if let Some(b) = tree.get_mut(child_id) {
+            b.computed_style.width = Some(w);
+        }
+    }
+    if let Some(h) = stretch_h {
+        if let Some(b) = tree.get_mut(child_id) {
+            b.computed_style.height = Some(h);
+        }
+    }
+
     let (_w, _h) = layout_block(tree, child_id, containing_width);
+
+    // Restore original width/height to avoid permanent style mutation.
+    if stretch_w.is_some() {
+        if let Some(b) = tree.get_mut(child_id) {
+            b.computed_style.width = orig_width;
+        }
+    }
+    if stretch_h.is_some() {
+        if let Some(b) = tree.get_mut(child_id) {
+            b.computed_style.height = orig_height;
+        }
+    }
 
     if let Some(b) = tree.get_mut(child_id) {
         let box_w = b.box_model.border_box.w;
