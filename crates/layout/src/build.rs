@@ -244,6 +244,7 @@ fn create_anonymous_block(
 ) -> LayoutBoxId {
     let mut anon_style = parent_style.clone();
     anon_style.display = Display::Block;
+    anon_style.is_list_item = false;
     let anon = tree.alloc(LayoutBox::anonymous(LayoutBoxKind::Anonymous, anon_style));
     for &child in inline_children {
         tree.append_child(anon, child);

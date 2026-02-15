@@ -1538,7 +1538,13 @@ fn run_pipeline_test(name: &str, html_source: &str) -> (usize, f32, f32, usize, 
         .filter(|&&n| dom.nodes.get(n).map(|node| node.is_element()).unwrap_or(false))
         .count();
     let text_node_count = all_nodes.iter()
-        .filter(|&&n| dom.nodes.get(n).map(|node| node.is_text()).unwrap_or(false))
+        .filter(|&&n| dom.nodes.get(n).map(|node| {
+            if let NodeData::Text { data } = &node.data {
+                !data.trim().is_empty()
+            } else {
+                false
+            }
+        }).unwrap_or(false))
         .count();
 
     let ua_stylesheet = css::parse_stylesheet(UA_CSS);

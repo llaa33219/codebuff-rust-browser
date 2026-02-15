@@ -486,6 +486,7 @@ pub fn apply_declaration(
     match prop_name.as_str() {
         "display" => {
             if let Some(kw) = first_keyword(&decl.value) {
+                style.is_list_item = kw == "list-item";
                 style.display = match kw {
                     "none" => Display::None,
                     "block" => Display::Block,
@@ -2365,7 +2366,7 @@ fn apply_inherit(style: &mut ComputedStyle, prop: &str, parent: &ComputedStyle) 
         "visibility" => style.visibility = parent.visibility,
         "cursor" => style.cursor = parent.cursor,
         "list-style-type" | "list-style" => style.list_style_type = parent.list_style_type,
-        "display" => style.display = parent.display,
+        "display" => { style.display = parent.display; style.is_list_item = parent.is_list_item; }
         "opacity" => style.opacity = parent.opacity,
         "word-break" => style.word_break = parent.word_break,
         "overflow-wrap" => style.overflow_wrap = parent.overflow_wrap,
@@ -2387,7 +2388,7 @@ fn apply_inherit(style: &mut ComputedStyle, prop: &str, parent: &ComputedStyle) 
 fn apply_initial(style: &mut ComputedStyle, prop: &str) {
     let def = ComputedStyle::default();
     match prop {
-        "display" => style.display = def.display,
+        "display" => { style.display = def.display; style.is_list_item = false; }
         "position" => style.position = def.position,
         "float" => style.float = def.float,
         "color" => style.color = def.color,

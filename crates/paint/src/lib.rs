@@ -207,6 +207,7 @@ fn paint_layout_box(tree: &LayoutTree, box_id: LayoutBoxId, list: &mut DisplayLi
 
         // 5. Paint list markers for list-item elements.
         if layout_box.kind == LayoutBoxKind::Block
+            && layout_box.computed_style.is_list_item
             && layout_box.computed_style.list_style_type != style::ListStyleType::None
         {
             paint_list_marker(tree, box_id, layout_box, list);
@@ -772,7 +773,7 @@ fn count_list_item_index(tree: &LayoutTree, box_id: LayoutBoxId) -> u32 {
         let mut index = 0u32;
         for &sibling_id in &siblings {
             if tree.get(sibling_id)
-                .map(|b| b.computed_style.list_style_type != style::ListStyleType::None)
+                .map(|b| b.computed_style.is_list_item)
                 .unwrap_or(false)
             {
                 index += 1;

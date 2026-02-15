@@ -1058,6 +1058,7 @@ pub struct ComputedStyle {
 
     // -- List --
     pub list_style_type: ListStyleType,
+    pub is_list_item: bool,
 
     // -- Box shadow --
     pub box_shadow: Vec<BoxShadow>,
@@ -1229,6 +1230,7 @@ impl Default for ComputedStyle {
             cursor: Cursor::Auto,
 
             list_style_type: ListStyleType::None,
+            is_list_item: false,
 
             box_shadow: Vec::new(),
 

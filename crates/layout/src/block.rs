@@ -438,8 +438,15 @@ fn layout_table_fixed(
     let mut row_groups: Vec<(LayoutBoxId, usize, usize)> = Vec::new();
     for &child_id in children {
         let grandchildren = tree.children(child_id);
-        let has_rows = grandchildren.iter().any(|&gc| tree.children(gc).len() >= 2);
-        if has_rows && !grandchildren.is_empty() {
+        let has_rows = !grandchildren.is_empty() && grandchildren.iter().any(|&gc| {
+            let gc_children = tree.children(gc);
+            gc_children.len() >= 2 && gc_children.iter().any(|&c| {
+                tree.get(c)
+                    .map(|b| matches!(b.kind, LayoutBoxKind::Block | LayoutBoxKind::Flex | LayoutBoxKind::Grid | LayoutBoxKind::Anonymous))
+                    .unwrap_or(false)
+            })
+        });
+        if has_rows {
             let start = rows.len();
             rows.extend(grandchildren);
             row_groups.push((child_id, start, rows.len()));
