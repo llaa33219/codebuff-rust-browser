@@ -28,11 +28,11 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
             (None, Some(pct)) => Some(containing_width * pct / 100.0),
             _ => None,
         };
-        let height = match (s.height, s.height_pct) {
-            (Some(h), _) => Some(h),
-            (None, Some(pct)) => Some(containing_width * pct / 100.0),
-            _ => None,
-        };
+        // NOTE: Percentage heights (height_pct) are intentionally ignored here
+        // because we don't have the containing block's height. Per CSS spec,
+        // percentage heights resolve to auto when containing height is indefinite.
+        // TODO: Pass containing_height: Option<f32> to support percentage heights.
+        let height = s.height;
         let min_w = match (s.min_width, s.min_width_pct) {
             (Some(w), _) => Some(w),
             (None, Some(pct)) => Some(containing_width * pct / 100.0),
@@ -52,16 +52,8 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
             s.display,
             min_w,
             max_w,
-            match (s.min_height, s.min_height_pct) {
-                (Some(h), _) => Some(h),
-                (None, Some(pct)) => Some(containing_width * pct / 100.0),
-                _ => None,
-            },
-            match (s.max_height, s.max_height_pct) {
-                (Some(h), _) => Some(h),
-                (None, Some(pct)) => Some(containing_width * pct / 100.0),
-                _ => None,
-            },
+            s.min_height,
+            s.max_height,
             s.box_sizing,
             s.aspect_ratio,
         )
@@ -600,18 +592,36 @@ fn layout_inline_children(
 }
 
 /// Layout a mix of block and inline children sequentially.
+///
+/// Groups consecutive inline items and lays them out together using the
+/// inline formatting context, while block-level items are laid out individually.
 fn layout_mixed_children(
     tree: &mut LayoutTree,
     children: &[LayoutBoxId],
     containing_width: f32,
 ) -> f32 {
     let mut cursor_y = 0.0f32;
+    let mut inline_run: Vec<LayoutBoxId> = Vec::new();
 
     for &child_id in children {
         let kind = tree.get(child_id).map(|b| b.kind).unwrap_or(LayoutBoxKind::Block);
 
         match kind {
             LayoutBoxKind::Block | LayoutBoxKind::Flex | LayoutBoxKind::Grid | LayoutBoxKind::Anonymous => {
+                // Flush any pending inline run.
+                if !inline_run.is_empty() {
+                    let h = layout_inline_children(tree, &inline_run, containing_width);
+                    for &iid in &inline_run {
+                        if let Some(ib) = tree.get_mut(iid) {
+                            ib.box_model.content_box.y += cursor_y;
+                            ib.box_model.border_box.y += cursor_y;
+                            ib.box_model.padding_box.y += cursor_y;
+                            ib.box_model.margin_box.y += cursor_y;
+                        }
+                    }
+                    cursor_y += h;
+                    inline_run.clear();
+                }
                 let (_w, h) = layout_block(tree, child_id, containing_width);
                 if let Some(child_box) = tree.get_mut(child_id) {
                     let dy = cursor_y - child_box.box_model.border_box.y;
@@ -623,20 +633,23 @@ fn layout_mixed_children(
                 cursor_y += h;
             }
             _ => {
-                // Treat inline/text items with a simple line height.
-                let line_height = tree
-                    .get(child_id)
-                    .map(|b| b.computed_style.line_height_px)
-                    .unwrap_or(19.2);
-                if let Some(child_box) = tree.get_mut(child_id) {
-                    child_box.box_model.content_box = Rect::new(0.0, cursor_y, containing_width, line_height);
-                    child_box.box_model.border_box = child_box.box_model.content_box;
-                    child_box.box_model.padding_box = child_box.box_model.content_box;
-                    child_box.box_model.margin_box = child_box.box_model.content_box;
-                }
-                cursor_y += line_height;
+                inline_run.push(child_id);
             }
         }
+    }
+
+    // Flush trailing inline run.
+    if !inline_run.is_empty() {
+        let h = layout_inline_children(tree, &inline_run, containing_width);
+        for &iid in &inline_run {
+            if let Some(ib) = tree.get_mut(iid) {
+                ib.box_model.content_box.y += cursor_y;
+                ib.box_model.border_box.y += cursor_y;
+                ib.box_model.padding_box.y += cursor_y;
+                ib.box_model.margin_box.y += cursor_y;
+            }
+        }
+        cursor_y += h;
     }
 
     cursor_y

@@ -312,12 +312,28 @@ fn measure_inline_box(tree: &LayoutTree, box_id: LayoutBoxId, _available_width: 
                         .iter()
                         .map(|&c| measure_inline_box(tree, c, _available_width).0)
                         .sum();
-                    (children_width.max(0.0), line_height)
+                    let p = b.computed_style.padding.left + b.computed_style.padding.right;
+                    let bw = b.computed_style.border_widths().left + b.computed_style.border_widths().right;
+                    let ml = b.computed_style.margin.left;
+                    let mr = b.computed_style.margin.right;
+                    let m = if ml.is_finite() { ml } else { 0.0 } + if mr.is_finite() { mr } else { 0.0 };
+                    ((children_width + p + bw + m).max(0.0), line_height)
                 }
             }
         }
         LayoutBoxKind::InlineBlock => {
-            let w = b.computed_style.width.unwrap_or(0.0);
+            let w = match b.computed_style.width {
+                Some(w) => w,
+                None => {
+                    // Shrink-to-fit: estimate from children's measured widths.
+                    let children_w: f32 = b.children.iter()
+                        .map(|&c| measure_inline_box(tree, c, _available_width).0)
+                        .sum();
+                    let p = b.computed_style.padding.left + b.computed_style.padding.right;
+                    let bw = b.computed_style.border_widths().left + b.computed_style.border_widths().right;
+                    children_w + p + bw
+                }
+            };
             let h = b.computed_style.height.unwrap_or(line_height);
             (w, h)
         }
