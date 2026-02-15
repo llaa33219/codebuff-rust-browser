@@ -76,6 +76,17 @@ const UA_CSS: &str = "
     sup { vertical-align: super; font-size: 14px; }
     mark { background-color: #ffff00; }
     blockquote { margin: 8px 40px; }
+    video, audio, canvas, iframe { display: inline-block; }
+    svg { display: inline-block; }
+    picture, output { display: inline; }
+    progress, meter { display: inline-block; width: 160px; height: 16px; }
+    datalist, param, source { display: none; }
+    dd { margin-left: 40px; }
+    dl { margin: 16px 0; }
+    dt { font-weight: bold; }
+    abbr { text-decoration: underline; }
+    details { display: block; }
+    summary { display: list-item; }
 ";
 
 /// Built-in homepage shown for new tabs.
@@ -135,6 +146,7 @@ p {{ font-size: 15px; color: #666; max-width: 560px; margin: 8px auto; }}
 pub struct PageData {
     pub dom: Dom,
     pub style_map: HashMap<NodeId, ComputedStyle>,
+    pub sheets: Vec<(css::Stylesheet, style::StyleOrigin)>,
     pub layout_tree: LayoutTree,
     pub display_list: Vec<DisplayItem>,
     pub image_store: ImageStore,
@@ -682,6 +694,7 @@ impl BrowserEngine {
         PageData {
             dom,
             style_map,
+            sheets,
             layout_tree,
             display_list,
             image_store: HashMap::new(),
@@ -868,19 +881,24 @@ impl BrowserEngine {
         self.chrome_state.height = h;
         self.framebuffer = Framebuffer::new(w, h);
 
-        // Re-layout all pages
+        // Re-style and re-layout all pages with updated viewport dimensions.
         let tab_ids: Vec<TabId> = self.pages.keys().copied().collect();
+        let vw = w as f32;
+        let vh = h as f32;
         let content_width = w.saturating_sub(16) as f32;
         for tab_id in tab_ids {
-            // Build new layout in a scoped block so the immutable borrow is
-            // dropped before the mutable write below.
+            // Build new style map + layout in a scoped block so the immutable
+            // borrow is dropped before the mutable write below.
             let rebuilt = {
                 let page = match self.pages.get(&tab_id) {
                     Some(p) => p,
                     None => continue,
                 };
+                let style_map = build_style_map(
+                    &page.dom, DOC_ROOT, &page.sheets, vw, vh,
+                );
                 let mut layout_tree = layout::build_layout_tree(
-                    &page.dom, DOC_ROOT, &page.style_map,
+                    &page.dom, DOC_ROOT, &style_map,
                 );
                 let (_, content_height) = if let Some(root_id) = layout_tree.root {
                     layout::layout_block(&mut layout_tree, root_id, content_width)
@@ -891,15 +909,21 @@ impl BrowserEngine {
                     layout::resolve_absolute_positions(&mut layout_tree, root_id, 0.0, 0.0);
                 }
                 let display_list = paint::build_display_list(&layout_tree);
-                (layout_tree, display_list, content_height)
+                (style_map, layout_tree, display_list, content_height)
             };
 
             // Write phase: immutable borrow is now dropped.
-            let (layout_tree, display_list, content_height) = rebuilt;
+            let (style_map, layout_tree, display_list, content_height) = rebuilt;
             if let Some(page) = self.pages.get_mut(&tab_id) {
+                page.style_map = style_map;
                 page.layout_tree = layout_tree;
                 page.display_list = display_list;
                 page.content_height = content_height;
+                let max_scroll = (content_height
+                    - h.saturating_sub(CHROME_HEIGHT + STATUS_BAR_HEIGHT) as f32)
+                    .max(0.0);
+                page.scroll_y = page.scroll_y.clamp(0.0, max_scroll);
+                page.scroll_target_y = page.scroll_target_y.clamp(0.0, max_scroll);
             }
         }
 
@@ -1054,6 +1078,7 @@ impl BrowserEngine {
 
             // Rebuild style map, layout, and display list.
             page.style_map = build_style_map(&page.dom, DOC_ROOT, &sheets, self.width as f32, self.height as f32);
+            page.sheets = sheets;
             let content_width = self.width.saturating_sub(16) as f32;
             let mut layout_tree = layout::build_layout_tree(&page.dom, DOC_ROOT, &page.style_map);
             let (_, content_height) = if let Some(root_id) = layout_tree.root {

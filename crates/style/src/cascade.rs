@@ -1732,7 +1732,7 @@ pub fn apply_declaration(
                 };
             }
         }
-        "overflow-wrap" => {
+        "overflow-wrap" | "word-wrap" => {
             if let Some(kw) = first_keyword(&decl.value) {
                 style.overflow_wrap = match kw {
                     "normal" => OverflowWrap::Normal,
@@ -2236,6 +2236,34 @@ pub fn apply_declaration(
         "clip" | "clip-path" | "mask" | "mask-image" => {}
 
         "forced-color-adjust" | "print-color-adjust" => {}
+
+        "text-decoration-color" | "text-decoration-style" | "text-decoration-thickness"
+        | "text-underline-offset" | "text-underline-position" => {}
+
+        "font-variant" | "font-variant-caps" | "font-variant-ligatures"
+        | "font-variant-numeric" | "font-variant-east-asian" | "font-feature-settings"
+        | "font-optical-sizing" | "font-variation-settings" | "font-stretch" | "font-display" => {}
+
+        "line-clamp" | "-webkit-line-clamp" => {}
+
+        "list-style-position" | "list-style-image" => {}
+
+        "font-smoothing" | "osx-font-smoothing" | "text-size-adjust" => {}
+        "tap-highlight-color" | "overflow-scrolling" => {}
+        "backface-visibility" => {}
+        "text-fill-color" | "text-stroke" | "text-stroke-width" | "text-stroke-color" => {}
+
+        "scrollbar-width" | "scrollbar-color" | "scrollbar-gutter" => {}
+        "content-visibility" | "container-type" | "container-name" | "container" => {}
+        "text-wrap" | "text-wrap-mode" | "text-wrap-style" => {}
+        "white-space-collapse" => {}
+        "color-interpolation" | "color-interpolation-filters" => {}
+        "image-rendering" => {}
+        "shape-outside" | "shape-margin" | "shape-image-threshold" => {}
+        "grid-template-columns" | "grid-template-rows" | "grid-template-areas"
+        | "grid-template" | "grid-auto-columns" | "grid-auto-rows" | "grid-auto-flow"
+        | "grid-area" | "grid-row" | "grid-column" | "grid-row-start" | "grid-row-end"
+        | "grid-column-start" | "grid-column-end" => {}
 
         "page" | "orphans" | "widows" | "all" => {}
 
