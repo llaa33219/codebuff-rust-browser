@@ -10,6 +10,7 @@ use crate::geometry::{compute_box_model, available_content_width};
 use crate::tree::{LayoutBoxId, LayoutBoxKind, LayoutTree};
 use crate::inline::layout_inline_content;
 use crate::flex::layout_flex;
+use crate::grid::layout_grid;
 
 /// Layout a block-level box and its children.
 ///
@@ -174,6 +175,9 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
     if display == style::Display::Flex || display == style::Display::InlineFlex {
         // Delegate to flex layout (handles all children internally).
         content_height = layout_flex(tree, box_id, content_width);
+    } else if display == style::Display::Grid || display == style::Display::InlineGrid {
+        // Delegate to grid layout (handles all children internally).
+        content_height = layout_grid(tree, box_id, content_width);
     } else if flow_children.is_empty() {
         content_height = specified_height.unwrap_or(0.0);
     } else if has_block_children && !has_inline_children {

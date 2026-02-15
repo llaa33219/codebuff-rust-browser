@@ -2260,8 +2260,35 @@ pub fn apply_declaration(
         "color-interpolation" | "color-interpolation-filters" => {}
         "image-rendering" => {}
         "shape-outside" | "shape-margin" | "shape-image-threshold" => {}
-        "grid-template-columns" | "grid-template-rows" | "grid-template-areas"
-        | "grid-template" | "grid-auto-columns" | "grid-auto-rows" | "grid-auto-flow"
+        "grid-template-columns" => {
+            if first_keyword_or_none(&decl.value) == Some("none") {
+                style.grid.template_columns.clear();
+            } else {
+                style.grid.template_columns = parse_grid_track_list(&decl.value, style.font_size_px);
+            }
+        }
+        "grid-template-rows" => {
+            if first_keyword_or_none(&decl.value) == Some("none") {
+                style.grid.template_rows.clear();
+            } else {
+                style.grid.template_rows = parse_grid_track_list(&decl.value, style.font_size_px);
+            }
+        }
+        "grid-auto-flow" => {
+            let keywords: Vec<&str> = decl.value.iter().filter_map(|v| {
+                if let CssValue::Keyword(kw) = v { Some(kw.as_str()) } else { None }
+            }).collect();
+            let has_column = keywords.contains(&"column");
+            let has_dense = keywords.contains(&"dense");
+            style.grid.auto_flow = match (has_column, has_dense) {
+                (true, true) => GridAutoFlow::ColumnDense,
+                (true, false) => GridAutoFlow::Column,
+                (false, true) => GridAutoFlow::RowDense,
+                (false, false) => GridAutoFlow::Row,
+            };
+        }
+        "grid-template-areas" | "grid-template"
+        | "grid-auto-columns" | "grid-auto-rows"
         | "grid-area" | "grid-row" | "grid-column" | "grid-row-start" | "grid-row-end"
         | "grid-column-start" | "grid-column-end" => {}
 
@@ -2539,6 +2566,7 @@ fn resolve_length(value: f64, unit: &LengthUnit, parent_font_size: f32) -> f32 {
         LengthUnit::Ch => value as f32 * parent_font_size * 0.5,
         LengthUnit::Ex => value as f32 * parent_font_size * 0.5,
         LengthUnit::Percent => value as f32, // caller must handle percentage context
+        LengthUnit::Fr => value as f32, // fr units only meaningful in grid track context
     }
 }
 
@@ -2949,6 +2977,70 @@ fn resolve_time_to_ms(val: f64, unit: &LengthUnit) -> f32 {
         LengthUnit::Px => val as f32,
         _ => (val * 1000.0) as f32,
     }
+}
+
+fn parse_grid_track_list(values: &[CssValue], parent_font_size: f32) -> Vec<GridTrackSize> {
+    let mut tracks = Vec::new();
+    for v in values {
+        match v {
+            CssValue::Length(val, LengthUnit::Fr) => {
+                tracks.push(GridTrackSize::Fr(*val as f32));
+            }
+            CssValue::Length(val, unit) => {
+                tracks.push(GridTrackSize::Fixed(resolve_length(*val, unit, parent_font_size)));
+            }
+            CssValue::Number(n) if *n == 0.0 => {
+                tracks.push(GridTrackSize::Fixed(0.0));
+            }
+            CssValue::Percentage(p) => {
+                tracks.push(GridTrackSize::Fixed(*p as f32));
+            }
+            CssValue::Auto => {
+                tracks.push(GridTrackSize::Auto);
+            }
+            CssValue::Keyword(kw) if kw == "auto" || kw == "min-content" || kw == "max-content" => {
+                tracks.push(GridTrackSize::Auto);
+            }
+            CssValue::Function { name, args } => {
+                let lower = name.to_ascii_lowercase();
+                if lower == "repeat" {
+                    let count = args.iter().find_map(|a| {
+                        if let CssValue::Number(n) = a { Some((*n as usize).max(1)) } else { None }
+                    }).unwrap_or(1);
+                    let inner_values: Vec<CssValue> = args.iter()
+                        .filter(|a| !matches!(a, CssValue::Number(_)))
+                        .cloned()
+                        .collect();
+                    let inner = if inner_values.is_empty() {
+                        vec![GridTrackSize::Fr(1.0)]
+                    } else {
+                        parse_grid_track_list(&inner_values, parent_font_size)
+                    };
+                    for _ in 0..count {
+                        tracks.extend(inner.iter().cloned());
+                    }
+                } else if lower == "minmax" {
+                    let breadths: Vec<GridBreadth> = args.iter().filter_map(|a| {
+                        match a {
+                            CssValue::Length(val, LengthUnit::Fr) => Some(GridBreadth::Fr(*val as f32)),
+                            CssValue::Length(val, unit) => Some(GridBreadth::Fixed(resolve_length(*val, unit, parent_font_size))),
+                            CssValue::Number(n) if *n == 0.0 => Some(GridBreadth::Fixed(0.0)),
+                            CssValue::Auto => Some(GridBreadth::Auto),
+                            CssValue::Keyword(kw) if kw == "auto" => Some(GridBreadth::Auto),
+                            CssValue::Keyword(kw) if kw == "min-content" => Some(GridBreadth::MinContent),
+                            CssValue::Keyword(kw) if kw == "max-content" => Some(GridBreadth::MaxContent),
+                            _ => None,
+                        }
+                    }).collect();
+                    if breadths.len() >= 2 {
+                        tracks.push(GridTrackSize::MinMax(breadths[0].clone(), breadths[1].clone()));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    tracks
 }
 
 fn apply_border_side_shorthand(values: &[CssValue], side: &mut BorderSide, parent_font_size: f32, current_color: Color) {

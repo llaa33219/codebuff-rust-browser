@@ -12,6 +12,7 @@ pub enum LengthUnit {
     Ch,
     Ex,
     Percent,
+    Fr,
 }
 
 /// An RGBA color value.
@@ -434,6 +435,7 @@ pub fn parse_value_from_tokens(tokens: &[crate::token::CssToken]) -> Vec<CssValu
                     "ch" => LengthUnit::Ch,
                     "ex" => LengthUnit::Ex,
                     "%" => LengthUnit::Percent,
+                    "fr" => LengthUnit::Fr,
                     _ => LengthUnit::Px, // default fallback
                 };
                 values.push(CssValue::Length(*value, length_unit));

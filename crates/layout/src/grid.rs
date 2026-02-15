@@ -7,10 +7,9 @@
 //! 4. Position items in their resolved cells.
 //! 5. Return the total content height.
 
-use common::Rect;
 use style::{GridAutoFlow, GridStyle, GridTrackSize, GridBreadth};
 use crate::tree::{LayoutBoxId, LayoutTree};
-use crate::geometry::compute_box_model;
+use crate::block::layout_block;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Grid item placement
@@ -200,8 +199,15 @@ pub fn layout_grid(
         b.computed_style.grid.clone()
     };
 
-    // Collect children.
-    let children = tree.children(container_id);
+    // Collect children, filtering out absolutely/fixed positioned ones.
+    let children: Vec<LayoutBoxId> = tree.children(container_id)
+        .into_iter()
+        .filter(|&child_id| {
+            tree.get(child_id)
+                .map(|b| !matches!(b.computed_style.position, style::Position::Absolute | style::Position::Fixed))
+                .unwrap_or(true)
+        })
+        .collect();
     if children.is_empty() {
         return 0.0;
     }
@@ -224,32 +230,18 @@ pub fn layout_grid(
         .max()
         .unwrap_or(0);
 
-    // Compute per-track child sizes for auto-sizing.
-    // For columns: max child width per column track.
+    // Compute per-column child sizes from styles for auto-sizing columns.
     let mut col_child_sizes = vec![0.0f32; num_cols];
-    // For rows: max child height per row track.
-    let mut row_child_sizes = vec![0.0f32; num_rows];
-
     for item in &items {
-        let (child_w, child_h) = {
-            let b = match tree.get(item.box_id) {
-                Some(b) => b,
-                None => continue,
-            };
-            let s = &b.computed_style;
-            let w = s.width.unwrap_or(0.0);
-            let h = s.height.unwrap_or(s.line_height_px);
-            (w, h)
-        };
+        let child_w = tree.get(item.box_id)
+            .map(|b| b.computed_style.width.unwrap_or(0.0))
+            .unwrap_or(0.0);
         if item.col < num_cols {
             col_child_sizes[item.col] = col_child_sizes[item.col].max(child_w);
         }
-        if item.row < num_rows {
-            row_child_sizes[item.row] = row_child_sizes[item.row].max(child_h);
-        }
     }
 
-    // Resolve track sizes.
+    // Resolve column track sizes.
     let col_sizes = resolve_tracks(
         &grid_style.template_columns,
         num_cols,
@@ -257,10 +249,30 @@ pub fn layout_grid(
         grid_style.column_gap,
         &col_child_sizes,
     );
+
+    // Phase 1: Recursively layout each item at its column width to determine
+    // actual content heights.
+    for item in &items {
+        let col_w = span_size(&col_sizes, item.col, item.col_span, grid_style.column_gap);
+        layout_block(tree, item.box_id, col_w);
+    }
+
+    // Collect actual row heights from layout results.
+    let mut row_child_sizes = vec![0.0f32; num_rows];
+    for item in &items {
+        let h = tree.get(item.box_id)
+            .map(|b| b.box_model.border_box.h)
+            .unwrap_or(0.0);
+        if item.row < num_rows {
+            row_child_sizes[item.row] = row_child_sizes[item.row].max(h);
+        }
+    }
+
+    // Resolve row track sizes using actual content heights.
     let row_sizes = resolve_tracks(
         &grid_style.template_rows,
         num_rows,
-        f32::MAX, // rows are not constrained by available width
+        f32::MAX,
         grid_style.row_gap,
         &row_child_sizes,
     );
@@ -269,25 +281,22 @@ pub fn layout_grid(
     let col_offsets = track_offsets(&col_sizes, grid_style.column_gap);
     let row_offsets = track_offsets(&row_sizes, grid_style.row_gap);
 
-    // Position each item.
+    // Phase 2: Position each item at its resolved grid cell.
     for item in &items {
         let x = col_offsets.get(item.col).copied().unwrap_or(0.0);
         let y = row_offsets.get(item.row).copied().unwrap_or(0.0);
 
-        // Width = sum of spanned column sizes + gaps between them.
-        let w = span_size(&col_sizes, item.col, item.col_span, grid_style.column_gap);
-        let h = span_size(&row_sizes, item.row, item.row_span, grid_style.row_gap);
-
-        let content_rect = Rect::new(x, y, w, h);
-        let bm = compute_box_model(
-            content_rect,
-            &common::Edges::zero(),
-            &common::Edges::zero(),
-            &common::Edges::zero(),
-        );
-
         if let Some(b) = tree.get_mut(item.box_id) {
-            b.box_model = bm;
+            let dx = x - b.box_model.margin_box.x;
+            let dy = y - b.box_model.margin_box.y;
+            b.box_model.content_box.x += dx;
+            b.box_model.content_box.y += dy;
+            b.box_model.padding_box.x += dx;
+            b.box_model.padding_box.y += dy;
+            b.box_model.border_box.x += dx;
+            b.box_model.border_box.y += dy;
+            b.box_model.margin_box.x += dx;
+            b.box_model.margin_box.y += dy;
         }
     }
 

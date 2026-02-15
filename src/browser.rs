@@ -1598,6 +1598,37 @@ fn run_pipeline_test(name: &str, html_source: &str) -> (usize, f32, f32, usize, 
         eprintln!("    ⚠ ISSUE: {} text runs have zero/negative dimensions!", zero_text);
     }
 
+    // Check for overlapping text at same position (layout bug indicator)
+    let mut text_positions: Vec<(f32, f32)> = Vec::new();
+    let mut overlap_count = 0;
+    for item in &display_list {
+        if let DisplayItem::TextRun { rect, .. } = item {
+            for &(px, py) in &text_positions {
+                if (rect.x - px).abs() < 1.0 && (rect.y - py).abs() < 1.0 {
+                    overlap_count += 1;
+                    break;
+                }
+            }
+            text_positions.push((rect.x, rect.y));
+        }
+    }
+    if overlap_count > 0 {
+        eprintln!("    ⚠ ISSUE: {} text runs overlap at same position!", overlap_count);
+    }
+
+    // Check for text running far off-screen (negative x or very large x)
+    let mut offscreen = 0;
+    for item in &display_list {
+        if let DisplayItem::TextRun { rect, .. } = item {
+            if rect.x < -100.0 || rect.x > 5000.0 || rect.y < -100.0 || rect.y > 50000.0 {
+                offscreen += 1;
+            }
+        }
+    }
+    if offscreen > 0 {
+        eprintln!("    ⚠ ISSUE: {} text runs positioned off-screen!", offscreen);
+    }
+
     (element_count, w, h, rect_count, text_count, border_count)
 }
 
@@ -1771,5 +1802,452 @@ mod tests {
         let (_, _, h, rects, texts, _) = run_pipeline_test("media-site", html);
         assert!(h > 100.0, "Article should have substantial height, got {}", h);
         assert!(texts >= 4, "Should have article text, got {}", texts);
+    }
+
+    #[test]
+    fn test_google_search_results() {
+        let html = r#"<html><head><style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: arial, sans-serif; background: #fff; }
+            .header { background: #f1f3f4; padding: 10px 20px; display: flex; align-items: center; border-bottom: 1px solid #dfe1e5; }
+            .logo { font-size: 24px; font-weight: bold; color: #4285f4; margin-right: 20px; }
+            .search-box { flex: 1; max-width: 600px; border: 1px solid #dfe1e5; border-radius: 24px; padding: 10px 16px; font-size: 16px; }
+            .results { max-width: 652px; padding: 20px; }
+            .result { margin-bottom: 24px; }
+            .result .url { font-size: 12px; color: #202124; margin-bottom: 4px; }
+            .result .title { font-size: 20px; color: #1a0dab; margin-bottom: 4px; cursor: pointer; }
+            .result .title:hover { text-decoration: underline; }
+            .result .snippet { font-size: 14px; color: #4d5156; line-height: 1.58; }
+            .result .snippet em { font-weight: bold; }
+            .stats { font-size: 12px; color: #70757a; padding: 0 20px 12px; }
+            .pagination { text-align: center; padding: 20px; }
+            .pagination a { display: inline-block; padding: 8px 16px; margin: 0 4px; color: #1a0dab; text-decoration: none; }
+        </style></head><body>
+            <div class="header">
+                <div class="logo">Google</div>
+                <div class="search-box">rust browser engine</div>
+            </div>
+            <div class="stats">About 1,234,000 results (0.42 seconds)</div>
+            <div class="results">
+                <div class="result">
+                    <div class="url">https://example.com/rust-browser</div>
+                    <div class="title"><a href="">Building a Browser Engine from Scratch in Rust</a></div>
+                    <div class="snippet">A complete guide to building a <em>browser engine</em> using <em>Rust</em> with zero dependencies. Covers HTML parsing, CSS layout, and rendering.</div>
+                </div>
+                <div class="result">
+                    <div class="url">https://servo.org</div>
+                    <div class="title"><a href="">Servo - The Parallel Browser Engine</a></div>
+                    <div class="snippet">Servo is a prototype web <em>browser engine</em> written in <em>Rust</em>. It is currently developed by the Linux Foundation.</div>
+                </div>
+                <div class="result">
+                    <div class="url">https://docs.rs/web-engine</div>
+                    <div class="title"><a href="">web-engine - Rust Documentation</a></div>
+                    <div class="snippet">API documentation for the <em>Rust</em> web-engine crate. A lightweight HTML/CSS rendering engine.</div>
+                </div>
+            </div>
+            <div class="pagination"><a href="">1</a><a href="">2</a><a href="">3</a><a href="">Next</a></div>
+        </body></html>"#;
+        let (_, _, h, rects, texts, _) = run_pipeline_test("google-search", html);
+        assert!(h > 200.0, "Google results should have substantial height, got {}", h);
+        assert!(texts >= 10, "Should render all search result text, got {}", texts);
+        assert!(rects > 0, "Should have backgrounds");
+    }
+
+    #[test]
+    fn test_wikipedia_article() {
+        let html = r#"<html><head><style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: 'Linux Libertine', Georgia, Times, serif; font-size: 14px; line-height: 1.6; color: #202122; background: #fff; }
+            .header { background: #fff; border-bottom: 1px solid #a7d7f9; padding: 8px 20px; display: flex; justify-content: space-between; align-items: center; }
+            .header .logo { font-size: 18px; font-weight: bold; }
+            .content { display: flex; max-width: 1200px; margin: 0 auto; }
+            .sidebar { width: 160px; padding: 12px; background: #f6f6f6; border-right: 1px solid #a7d7f9; font-size: 12px; }
+            .sidebar ul { list-style: none; padding: 0; }
+            .sidebar li { margin: 4px 0; }
+            .sidebar a { color: #0645ad; text-decoration: none; }
+            .article { flex: 1; padding: 20px 24px; }
+            .article h1 { font-size: 28px; font-weight: normal; border-bottom: 1px solid #a2a9b1; padding-bottom: 4px; margin-bottom: 8px; }
+            .article h2 { font-size: 22px; font-weight: normal; border-bottom: 1px solid #a2a9b1; margin: 16px 0 8px; padding-bottom: 4px; }
+            .article h3 { font-size: 17px; font-weight: bold; margin: 12px 0 4px; }
+            .article p { margin: 8px 0; }
+            .article a { color: #0645ad; text-decoration: none; }
+            .infobox { float: right; width: 260px; border: 1px solid #a2a9b1; background: #f8f9fa; padding: 8px; margin: 0 0 12px 16px; font-size: 12px; }
+            .infobox th { text-align: left; padding: 4px; background: #ddd; }
+            .infobox td { padding: 4px; }
+            .toc { background: #f8f9fa; border: 1px solid #a2a9b1; padding: 8px 12px; margin: 8px 0; display: inline-block; }
+            .toc h2 { font-size: 14px; margin: 0 0 8px; border: none; }
+            .toc ol { padding-left: 20px; font-size: 13px; }
+        </style></head><body>
+            <div class="header">
+                <div class="logo">Wikipedia</div>
+                <div>English</div>
+            </div>
+            <div class="content">
+                <nav class="sidebar">
+                    <ul><li><a href="">Main page</a></li><li><a href="">Contents</a></li><li><a href="">Current events</a></li><li><a href="">Random article</a></li></ul>
+                </nav>
+                <main class="article">
+                    <h1>Rust (programming language)</h1>
+                    <div class="infobox">
+                        <table><tr><th>Developer</th><td>Graydon Hoare</td></tr><tr><th>First appeared</th><td>2010</td></tr><tr><th>Typing</th><td>Static, strong</td></tr><tr><th>License</th><td>MIT / Apache 2.0</td></tr></table>
+                    </div>
+                    <p><b>Rust</b> is a multi-paradigm, general-purpose programming language that emphasizes performance, type safety, and concurrency. It enforces memory safety without a garbage collector.</p>
+                    <div class="toc"><h2>Contents</h2><ol><li>History</li><li>Design</li><li>Features</li><li>Usage</li></ol></div>
+                    <h2>History</h2>
+                    <p>Rust grew out of a personal project by Mozilla Research employee Graydon Hoare, who stated that the project was named after the rust family of fungi.</p>
+                    <h2>Design</h2>
+                    <p>Rust is designed to be memory safe, and it does not permit null pointers, dangling pointers, or data races.</p>
+                    <h3>Ownership system</h3>
+                    <p>Rust's ownership system tracks which part of a program has exclusive access to which piece of memory. This prevents common bugs like use-after-free and double-free errors.</p>
+                    <h2>Features</h2>
+                    <p>Key features include zero-cost abstractions, move semantics, guaranteed memory safety, threads without data races, trait-based generics, pattern matching, and type inference.</p>
+                </main>
+            </div>
+        </body></html>"#;
+        let (_, _, h, rects, texts, borders) = run_pipeline_test("wikipedia", html);
+        assert!(h > 300.0, "Wikipedia article should be tall, got {}", h);
+        assert!(texts >= 20, "Should render all article text, got {}", texts);
+        assert!(borders > 0, "Should have table/section borders");
+    }
+
+    #[test]
+    fn test_ecommerce_product_page() {
+        let html = r#"<html><head><style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: Arial, sans-serif; background: #eaeded; }
+            .navbar { background: #131921; color: white; padding: 10px 20px; display: flex; align-items: center; gap: 20px; }
+            .navbar .logo { font-size: 22px; font-weight: bold; color: #ff9900; }
+            .navbar .search { flex: 1; display: flex; }
+            .navbar .search input { flex: 1; padding: 8px; border: none; border-radius: 4px 0 0 4px; font-size: 14px; }
+            .navbar .search button { background: #febd69; padding: 8px 16px; border: none; border-radius: 0 4px 4px 0; font-size: 14px; }
+            .product { background: white; max-width: 1000px; margin: 20px auto; padding: 20px; display: flex; gap: 24px; }
+            .product .image { width: 300px; height: 300px; background: #f7f7f7; border: 1px solid #ddd; display: flex; align-items: center; justify-content: center; font-size: 48px; }
+            .product .details { flex: 1; }
+            .product .title { font-size: 24px; color: #0f1111; margin-bottom: 8px; }
+            .product .rating { color: #c45500; font-size: 14px; margin-bottom: 8px; }
+            .product .price { font-size: 28px; color: #0f1111; margin-bottom: 8px; }
+            .product .price .symbol { font-size: 14px; vertical-align: super; }
+            .product .stock { color: #007600; font-size: 16px; margin-bottom: 12px; }
+            .product .buy-btn { background: #ffd814; border: 1px solid #fcd200; border-radius: 20px; padding: 10px 40px; font-size: 14px; cursor: pointer; display: block; width: 100%; text-align: center; margin-bottom: 8px; }
+            .product .features { margin-top: 16px; }
+            .product .features h3 { font-size: 16px; margin-bottom: 8px; }
+            .product .features li { font-size: 14px; margin: 4px 0; color: #333; }
+        </style></head><body>
+            <nav class="navbar">
+                <div class="logo">amazon</div>
+                <div class="search"><input type="text" placeholder="Search..."><button>Search</button></div>
+            </nav>
+            <div class="product">
+                <div class="image">📦</div>
+                <div class="details">
+                    <h1 class="title">The Rust Programming Language, 2nd Edition</h1>
+                    <div class="rating">★★★★★ 4.8 out of 5 stars (2,847 ratings)</div>
+                    <div class="price"><span class="symbol">$</span>39<span class="symbol">99</span></div>
+                    <div class="stock">In Stock</div>
+                    <div class="buy-btn">Add to Cart</div>
+                    <div class="buy-btn" style="background:#ffa41c">Buy Now</div>
+                    <div class="features">
+                        <h3>About this item</h3>
+                        <ul>
+                            <li>Comprehensive guide to the Rust programming language</li>
+                            <li>Written by the Rust core team</li>
+                            <li>Covers ownership, borrowing, and lifetimes</li>
+                            <li>Includes async/await and error handling patterns</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </body></html>"#;
+        let (_, _, h, rects, texts, _) = run_pipeline_test("ecommerce", html);
+        assert!(h > 200.0, "Product page should have height, got {}", h);
+        assert!(texts >= 15, "Should render all product text, got {}", texts);
+        assert!(rects >= 3, "Should have colored backgrounds, got {}", rects);
+    }
+
+    #[test]
+    fn test_dashboard_layout() {
+        let html = r#"<html><head><style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: -apple-system, sans-serif; background: #f0f2f5; }
+            .topbar { background: #1890ff; color: white; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; }
+            .topbar h1 { font-size: 18px; }
+            .layout { display: flex; min-height: 100vh; }
+            .sidenav { width: 200px; background: #001529; color: #adb5bd; padding: 16px 0; }
+            .sidenav a { display: block; padding: 10px 24px; color: #adb5bd; text-decoration: none; font-size: 14px; }
+            .sidenav a:hover { background: #1890ff; color: white; }
+            .main { flex: 1; padding: 24px; }
+            .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+            .stat-card { background: white; padding: 20px; border-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+            .stat-card .label { font-size: 14px; color: #8c8c8c; margin-bottom: 8px; }
+            .stat-card .value { font-size: 28px; font-weight: bold; color: #262626; }
+            .stat-card .change { font-size: 12px; margin-top: 4px; }
+            .stat-card .change.up { color: #52c41a; }
+            .stat-card .change.down { color: #ff4d4f; }
+            .content-row { display: flex; gap: 16px; }
+            .chart-card { flex: 2; background: white; padding: 20px; border-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+            .chart-card h3 { font-size: 16px; margin-bottom: 16px; }
+            .table-card { flex: 1; background: white; padding: 20px; border-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+            .table-card h3 { font-size: 16px; margin-bottom: 12px; }
+            table { width: 100%; border-collapse: collapse; font-size: 13px; }
+            th, td { padding: 8px; text-align: left; border-bottom: 1px solid #f0f0f0; }
+            th { font-weight: 600; color: #8c8c8c; }
+        </style></head><body>
+            <div class="topbar"><h1>Dashboard</h1><span>Admin User</span></div>
+            <div class="layout">
+                <nav class="sidenav">
+                    <a href="">Dashboard</a><a href="">Analytics</a><a href="">Users</a><a href="">Settings</a>
+                </nav>
+                <div class="main">
+                    <div class="stats">
+                        <div class="stat-card"><div class="label">Total Users</div><div class="value">12,458</div><div class="change up">+12.5%</div></div>
+                        <div class="stat-card"><div class="label">Revenue</div><div class="value">$48,290</div><div class="change up">+8.2%</div></div>
+                        <div class="stat-card"><div class="label">Orders</div><div class="value">3,847</div><div class="change down">-2.1%</div></div>
+                        <div class="stat-card"><div class="label">Conversion</div><div class="value">3.6%</div><div class="change up">+0.4%</div></div>
+                    </div>
+                    <div class="content-row">
+                        <div class="chart-card"><h3>Revenue Overview</h3><p>Chart placeholder - would show a line chart here</p></div>
+                        <div class="table-card">
+                            <h3>Recent Orders</h3>
+                            <table><thead><tr><th>ID</th><th>Customer</th><th>Amount</th></tr></thead>
+                            <tbody><tr><td>#1234</td><td>Alice</td><td>$299</td></tr><tr><td>#1233</td><td>Bob</td><td>$149</td></tr><tr><td>#1232</td><td>Charlie</td><td>$89</td></tr></tbody></table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </body></html>"#;
+        let (_, _, h, rects, texts, _) = run_pipeline_test("dashboard", html);
+        assert!(h > 200.0, "Dashboard should have substantial height, got {}", h);
+        assert!(texts >= 20, "Should render all dashboard text, got {}", texts);
+        assert!(rects >= 5, "Should have card backgrounds, got {}", rects);
+    }
+
+    #[test]
+    fn test_social_media_feed() {
+        let html = r#"<html><head><style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: -apple-system, Helvetica, sans-serif; background: #f0f2f5; }
+            .header { background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.1); padding: 8px 20px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; }
+            .header .logo { font-size: 24px; font-weight: bold; color: #1877f2; }
+            .feed { max-width: 680px; margin: 20px auto; }
+            .post { background: white; border-radius: 8px; margin-bottom: 16px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+            .post .post-header { display: flex; align-items: center; padding: 12px 16px; gap: 8px; }
+            .post .avatar { width: 40px; height: 40px; border-radius: 50%; background: #1877f2; }
+            .post .post-meta { flex: 1; }
+            .post .post-meta .name { font-weight: 600; font-size: 15px; color: #050505; }
+            .post .post-meta .time { font-size: 13px; color: #65676b; }
+            .post .post-body { padding: 0 16px 12px; font-size: 15px; line-height: 1.5; color: #050505; }
+            .post .post-actions { display: flex; padding: 4px 16px 8px; border-top: 1px solid #e4e6eb; }
+            .post .post-actions a { flex: 1; text-align: center; padding: 8px; color: #65676b; font-size: 14px; font-weight: 600; text-decoration: none; border-radius: 4px; }
+            .post .post-actions a:hover { background: #f0f2f5; }
+            .post .comments { padding: 8px 16px 12px; border-top: 1px solid #e4e6eb; }
+            .post .comment { display: flex; gap: 8px; margin-bottom: 8px; }
+            .post .comment .comment-avatar { width: 32px; height: 32px; border-radius: 50%; background: #e4e6eb; }
+            .post .comment .comment-body { background: #f0f2f5; padding: 8px 12px; border-radius: 18px; font-size: 13px; }
+            .post .comment .comment-body .cname { font-weight: 600; }
+        </style></head><body>
+            <div class="header"><div class="logo">facebook</div><div>Search</div></div>
+            <div class="feed">
+                <div class="post">
+                    <div class="post-header"><div class="avatar"></div><div class="post-meta"><div class="name">Rust Foundation</div><div class="time">2 hours ago</div></div></div>
+                    <div class="post-body">Just released Rust 2024 edition! New features include better async support, improved error messages, and faster compile times. Check out the blog post for details.</div>
+                    <div class="post-actions"><a href="">Like</a><a href="">Comment</a><a href="">Share</a></div>
+                    <div class="comments">
+                        <div class="comment"><div class="comment-avatar"></div><div class="comment-body"><span class="cname">Developer</span> This is amazing! Can't wait to try the new features.</div></div>
+                        <div class="comment"><div class="comment-avatar"></div><div class="comment-body"><span class="cname">User123</span> The compile time improvements are incredible.</div></div>
+                    </div>
+                </div>
+                <div class="post">
+                    <div class="post-header"><div class="avatar"></div><div class="post-meta"><div class="name">Web Dev Daily</div><div class="time">5 hours ago</div></div></div>
+                    <div class="post-body">Building a complete browser engine from scratch in Rust with zero dependencies - this is what systems programming looks like in 2024!</div>
+                    <div class="post-actions"><a href="">Like</a><a href="">Comment</a><a href="">Share</a></div>
+                </div>
+            </div>
+        </body></html>"#;
+        let (_, _, h, rects, texts, _) = run_pipeline_test("social-feed", html);
+        assert!(h > 300.0, "Social feed should be tall, got {}", h);
+        assert!(texts >= 15, "Should render all post text, got {}", texts);
+        assert!(rects >= 5, "Should have post card backgrounds, got {}", rects);
+    }
+
+    #[test]
+    fn test_landing_page() {
+        let html = r#"<html><head><style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: system-ui, sans-serif; color: #111; }
+            .hero { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-align: center; padding: 80px 20px; }
+            .hero h1 { font-size: 48px; margin-bottom: 16px; }
+            .hero p { font-size: 20px; opacity: 0.9; max-width: 600px; margin: 0 auto 32px; }
+            .hero .cta { display: inline-block; background: white; color: #667eea; padding: 14px 32px; border-radius: 8px; font-size: 16px; font-weight: 600; text-decoration: none; }
+            .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; padding: 60px 40px; max-width: 1100px; margin: 0 auto; }
+            .feature { text-align: center; padding: 24px; }
+            .feature .icon { font-size: 48px; margin-bottom: 16px; }
+            .feature h3 { font-size: 20px; margin-bottom: 8px; }
+            .feature p { font-size: 15px; color: #555; line-height: 1.6; }
+            .pricing { background: #f8f9fa; padding: 60px 20px; text-align: center; }
+            .pricing h2 { font-size: 36px; margin-bottom: 40px; }
+            .pricing .plans { display: flex; justify-content: center; gap: 24px; max-width: 900px; margin: 0 auto; }
+            .pricing .plan { background: white; border: 1px solid #dee2e6; border-radius: 12px; padding: 32px; flex: 1; }
+            .pricing .plan.featured { border-color: #667eea; box-shadow: 0 4px 12px rgba(102,126,234,0.3); }
+            .pricing .plan h3 { font-size: 22px; margin-bottom: 8px; }
+            .pricing .plan .price { font-size: 40px; font-weight: bold; margin: 16px 0; }
+            .pricing .plan ul { list-style: none; text-align: left; margin: 16px 0; }
+            .pricing .plan li { padding: 8px 0; font-size: 14px; color: #555; }
+            .footer { background: #1a1a2e; color: #aaa; padding: 40px 20px; text-align: center; font-size: 14px; }
+        </style></head><body>
+            <div class="hero">
+                <h1>Ship Faster with RustKit</h1>
+                <p>The modern framework for building lightning-fast web applications with Rust.</p>
+                <a href="" class="cta">Get Started Free</a>
+            </div>
+            <div class="features">
+                <div class="feature"><div class="icon">⚡</div><h3>Blazing Fast</h3><p>Zero-cost abstractions and compile-time guarantees mean your app runs at maximum speed.</p></div>
+                <div class="feature"><div class="icon">🔒</div><h3>Memory Safe</h3><p>Rust's ownership system prevents memory leaks, null pointers, and data races at compile time.</p></div>
+                <div class="feature"><div class="icon">🛠</div><h3>Developer Experience</h3><p>Hot reload, great error messages, and a thriving ecosystem of crates and tools.</p></div>
+            </div>
+            <div class="pricing">
+                <h2>Simple Pricing</h2>
+                <div class="plans">
+                    <div class="plan"><h3>Free</h3><div class="price">$0</div><ul><li>Up to 3 projects</li><li>Community support</li><li>Basic analytics</li></ul></div>
+                    <div class="plan featured"><h3>Pro</h3><div class="price">$29</div><ul><li>Unlimited projects</li><li>Priority support</li><li>Advanced analytics</li><li>Custom domains</li></ul></div>
+                    <div class="plan"><h3>Enterprise</h3><div class="price">$99</div><ul><li>Everything in Pro</li><li>SSO &amp; SAML</li><li>Dedicated support</li><li>SLA guarantee</li></ul></div>
+                </div>
+            </div>
+            <div class="footer">© 2024 RustKit. All rights reserved.</div>
+        </body></html>"#;
+        let (_, _, h, rects, texts, _) = run_pipeline_test("landing-page", html);
+        assert!(h > 500.0, "Landing page should be tall, got {}", h);
+        assert!(texts >= 25, "Should render all landing page text, got {}", texts);
+        assert!(rects >= 3, "Should have hero/pricing backgrounds, got {}", rects);
+    }
+
+    #[test]
+    fn test_nested_flexbox_holy_grail() {
+        let html = r#"<html><head><style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { min-height: 100vh; display: flex; flex-direction: column; font-family: sans-serif; }
+            header { background: #2c3e50; color: white; padding: 16px; text-align: center; }
+            .main { display: flex; flex: 1; }
+            .left { width: 200px; background: #ecf0f1; padding: 16px; order: -1; }
+            .center { flex: 1; padding: 20px; }
+            .right { width: 200px; background: #ecf0f1; padding: 16px; }
+            footer { background: #2c3e50; color: white; padding: 16px; text-align: center; }
+        </style></head><body>
+            <header><h1>Holy Grail Layout</h1></header>
+            <div class="main">
+                <div class="center"><h2>Main Content</h2><p>This is the center column with the main content. It should take up the remaining space.</p></div>
+                <aside class="left"><h3>Navigation</h3><ul><li>Link 1</li><li>Link 2</li><li>Link 3</li></ul></aside>
+                <aside class="right"><h3>Sidebar</h3><p>Extra content here</p></aside>
+            </div>
+            <footer>Footer text</footer>
+        </body></html>"#;
+        let (_, _, h, _, texts, _) = run_pipeline_test("holy-grail", html);
+        assert!(h > 100.0, "Holy grail should have height, got {}", h);
+        assert!(texts >= 8, "Should render all text, got {}", texts);
+    }
+
+    #[test]
+    fn test_responsive_card_grid() {
+        let html = r#"<html><head><style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: sans-serif; background: #f5f5f5; padding: 20px; }
+            .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; max-width: 1000px; margin: 0 auto; }
+            .card { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+            .card .thumb { height: 160px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+            .card .body { padding: 16px; }
+            .card .body h3 { font-size: 18px; margin-bottom: 8px; color: #333; }
+            .card .body p { font-size: 14px; color: #666; line-height: 1.5; }
+            .card .footer { padding: 12px 16px; border-top: 1px solid #eee; display: flex; justify-content: space-between; font-size: 13px; color: #999; }
+        </style></head><body>
+            <div class="grid">
+                <div class="card"><div class="thumb"></div><div class="body"><h3>Card One</h3><p>Description for the first card in the grid layout.</p></div><div class="footer"><span>3 min read</span><span>Jan 15</span></div></div>
+                <div class="card"><div class="thumb"></div><div class="body"><h3>Card Two</h3><p>Description for the second card with more text content.</p></div><div class="footer"><span>5 min read</span><span>Jan 14</span></div></div>
+                <div class="card"><div class="thumb"></div><div class="body"><h3>Card Three</h3><p>Description for the third card in the responsive grid.</p></div><div class="footer"><span>2 min read</span><span>Jan 13</span></div></div>
+                <div class="card"><div class="thumb"></div><div class="body"><h3>Card Four</h3><p>This is the fourth card testing grid wrapping.</p></div><div class="footer"><span>7 min read</span><span>Jan 12</span></div></div>
+                <div class="card"><div class="thumb"></div><div class="body"><h3>Card Five</h3><p>Fifth card for the second row of the grid.</p></div><div class="footer"><span>4 min read</span><span>Jan 11</span></div></div>
+                <div class="card"><div class="thumb"></div><div class="body"><h3>Card Six</h3><p>Last card completing the 3x2 grid layout.</p></div><div class="footer"><span>6 min read</span><span>Jan 10</span></div></div>
+            </div>
+        </body></html>"#;
+        let (_, _, h, rects, texts, _) = run_pipeline_test("card-grid", html);
+        assert!(h > 200.0, "Card grid should have height, got {}", h);
+        assert!(texts >= 18, "Should render all card text, got {}", texts);
+    }
+
+    #[test]
+    fn test_complex_table_with_spans() {
+        let html = r#"<html><head><style>
+            body { font-family: sans-serif; padding: 20px; }
+            table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+            th { background: #2c3e50; color: white; padding: 12px 8px; text-align: left; font-size: 14px; }
+            td { padding: 10px 8px; border-bottom: 1px solid #eee; font-size: 14px; }
+            tr:nth-child(even) { background: #f8f9fa; }
+            .total { font-weight: bold; background: #e9ecef; }
+            h2 { margin-bottom: 10px; }
+        </style></head><body>
+            <h2>Sales Report Q4 2024</h2>
+            <table>
+                <thead><tr><th>Product</th><th>Q1</th><th>Q2</th><th>Q3</th><th>Q4</th><th>Total</th></tr></thead>
+                <tbody>
+                    <tr><td>Widget A</td><td>$1,200</td><td>$1,500</td><td>$1,800</td><td>$2,100</td><td>$6,600</td></tr>
+                    <tr><td>Widget B</td><td>$800</td><td>$950</td><td>$1,100</td><td>$1,300</td><td>$4,150</td></tr>
+                    <tr><td>Service C</td><td>$3,000</td><td>$3,200</td><td>$3,500</td><td>$4,000</td><td>$13,700</td></tr>
+                    <tr><td>Service D</td><td>$500</td><td>$600</td><td>$700</td><td>$900</td><td>$2,700</td></tr>
+                    <tr class="total"><td>Total</td><td>$5,500</td><td>$6,250</td><td>$7,100</td><td>$8,300</td><td>$27,150</td></tr>
+                </tbody>
+            </table>
+        </body></html>"#;
+        let (_, _, h, rects, texts, _) = run_pipeline_test("sales-table", html);
+        assert!(h > 100.0, "Table should have height, got {}", h);
+        assert!(texts >= 25, "Should render all table cells, got {}", texts);
+    }
+
+    #[test]
+    fn test_blog_with_code_blocks() {
+        let html = r#"<html><head><style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: Georgia, serif; background: #fff; color: #333; }
+            .post { max-width: 720px; margin: 40px auto; padding: 0 20px; }
+            .post h1 { font-size: 36px; line-height: 1.2; margin-bottom: 12px; }
+            .post .meta { font-size: 14px; color: #999; margin-bottom: 32px; }
+            .post p { font-size: 18px; line-height: 1.8; margin-bottom: 20px; }
+            .post pre { background: #1e1e1e; color: #d4d4d4; padding: 16px 20px; border-radius: 8px; overflow-x: auto; margin: 20px 0; font-family: 'Fira Code', monospace; font-size: 14px; line-height: 1.6; }
+            .post code { background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-family: monospace; font-size: 0.9em; }
+            .post ul { margin: 16px 0 16px 24px; }
+            .post li { font-size: 18px; line-height: 1.8; margin: 4px 0; }
+            .post blockquote { border-left: 4px solid #667eea; padding: 12px 20px; margin: 20px 0; background: #f8f9ff; font-style: italic; }
+        </style></head><body>
+            <article class="post">
+                <h1>Getting Started with Rust</h1>
+                <div class="meta">Published on January 15, 2024 by Author</div>
+                <p>Rust is a systems programming language that runs blazingly fast, prevents segfaults, and guarantees thread safety.</p>
+                <p>Let's start with the classic Hello World:</p>
+                <pre>fn main() {
+    println!("Hello, world!");
+}</pre>
+                <p>Key concepts in Rust include:</p>
+                <ul>
+                    <li>Ownership and borrowing</li>
+                    <li>Pattern matching with <code>match</code></li>
+                    <li>Zero-cost abstractions</li>
+                    <li>Fearless concurrency</li>
+                </ul>
+                <blockquote>Rust has been the most loved programming language on Stack Overflow for 8 years running.</blockquote>
+                <p>Here's a more complex example:</p>
+                <pre>struct Point {
+    x: f64,
+    y: f64,
+}
+
+impl Point {
+    fn distance(&amp;self, other: &amp;Point) -> f64 {
+        ((self.x - other.x).powi(2) + (self.y - other.y).powi(2)).sqrt()
+    }
+}</pre>
+                <p>This demonstrates structs and method implementations. The <code>impl</code> block defines methods associated with the struct.</p>
+            </article>
+        </body></html>"#;
+        let (_, _, h, rects, texts, _) = run_pipeline_test("blog-code", html);
+        assert!(h > 400.0, "Blog should be tall, got {}", h);
+        assert!(texts >= 15, "Should render blog text + code, got {}", texts);
+        assert!(rects >= 2, "Should have code block and blockquote backgrounds, got {}", rects);
     }
 }
