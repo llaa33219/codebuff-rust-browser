@@ -7,10 +7,20 @@
 
 use common::{Rect, Edges};
 use crate::geometry::{compute_box_model, available_content_width};
-use crate::tree::{LayoutBoxId, LayoutBoxKind, LayoutTree};
+use crate::tree::{LayoutBox, LayoutBoxId, LayoutBoxKind, LayoutTree};
 use crate::inline::layout_inline_content;
 use crate::flex::layout_flex;
 use crate::grid::layout_grid;
+
+/// Check if a layout box is block-level, considering the CSS display property.
+/// Correctly handles inline-flex/inline-grid (Flex/Grid kind but inline display).
+fn is_box_block_level(b: &LayoutBox) -> bool {
+    match b.kind {
+        LayoutBoxKind::Block | LayoutBoxKind::Anonymous => true,
+        LayoutBoxKind::Inline | LayoutBoxKind::InlineBlock | LayoutBoxKind::TextRun => false,
+        LayoutBoxKind::Flex | LayoutBoxKind::Grid => b.computed_style.display.is_block_level(),
+    }
+}
 
 /// Layout a block-level box and its children.
 ///
@@ -98,12 +108,23 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
     };
 
     // Enforce min/max-width constraints.
+    // When box-sizing is border-box, min/max values include padding+border.
     let content_width = match max_width {
-        Some(mw) => content_width.min(mw),
+        Some(mw) => {
+            let mw = if box_sizing == style::BoxSizing::BorderBox {
+                (mw - padding.left - padding.right - border_widths.left - border_widths.right).max(0.0)
+            } else { mw };
+            content_width.min(mw)
+        }
         None => content_width,
     };
     let content_width = match min_width {
-        Some(mw) => content_width.max(mw),
+        Some(mw) => {
+            let mw = if box_sizing == style::BoxSizing::BorderBox {
+                (mw - padding.left - padding.right - border_widths.left - border_widths.right).max(0.0)
+            } else { mw };
+            content_width.max(mw)
+        }
         None => content_width,
     };
 
@@ -152,13 +173,13 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
     // Determine if flow children are all block, all inline, or mixed.
     let has_block_children = flow_children.iter().any(|&c| {
         tree.get(c)
-            .map(|b| matches!(b.kind, LayoutBoxKind::Block | LayoutBoxKind::Flex | LayoutBoxKind::Grid | LayoutBoxKind::Anonymous))
+            .map(|b| is_box_block_level(b))
             .unwrap_or(false)
     });
 
     let has_inline_children = flow_children.iter().any(|&c| {
         tree.get(c)
-            .map(|b| matches!(b.kind, LayoutBoxKind::Inline | LayoutBoxKind::InlineBlock | LayoutBoxKind::TextRun))
+            .map(|b| !is_box_block_level(b))
             .unwrap_or(false)
     });
 
@@ -247,11 +268,21 @@ pub fn layout_block(tree: &mut LayoutTree, box_id: LayoutBoxId, containing_width
 
     // Enforce max-height first, then min-height (per CSS spec, min wins if min > max).
     let final_height = match max_height {
-        Some(mh) => final_height.min(mh),
+        Some(mh) => {
+            let mh = if box_sizing == style::BoxSizing::BorderBox {
+                (mh - padding.top - padding.bottom - border_widths.top - border_widths.bottom).max(0.0)
+            } else { mh };
+            final_height.min(mh)
+        }
         None => final_height,
     };
     let final_height = match min_height {
-        Some(mh) => final_height.max(mh),
+        Some(mh) => {
+            let mh = if box_sizing == style::BoxSizing::BorderBox {
+                (mh - padding.top - padding.bottom - border_widths.top - border_widths.bottom).max(0.0)
+            } else { mh };
+            final_height.max(mh)
+        }
         None => final_height,
     };
 
@@ -604,10 +635,11 @@ fn layout_mixed_children(
     let mut inline_run: Vec<LayoutBoxId> = Vec::new();
 
     for &child_id in children {
-        let kind = tree.get(child_id).map(|b| b.kind).unwrap_or(LayoutBoxKind::Block);
+        let is_block = tree.get(child_id)
+            .map(|b| is_box_block_level(b))
+            .unwrap_or(true);
 
-        match kind {
-            LayoutBoxKind::Block | LayoutBoxKind::Flex | LayoutBoxKind::Grid | LayoutBoxKind::Anonymous => {
+        if is_block {
                 // Flush any pending inline run.
                 if !inline_run.is_empty() {
                     let h = layout_inline_children(tree, &inline_run, containing_width);
@@ -631,10 +663,8 @@ fn layout_mixed_children(
                     child_box.box_model.margin_box.y += dy;
                 }
                 cursor_y += h;
-            }
-            _ => {
-                inline_run.push(child_id);
-            }
+        } else {
+            inline_run.push(child_id);
         }
     }
 

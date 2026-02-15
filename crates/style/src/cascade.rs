@@ -1505,7 +1505,11 @@ pub fn apply_declaration(
             }
         }
 
-        "order" => {}
+        "order" => {
+            if let Some(CssValue::Number(n)) = decl.value.first() {
+                style.order = *n as i32;
+            }
+        }
 
         // Legacy -webkit-box-* flexbox properties (mapped to modern flexbox).
         "box-pack" => {
@@ -2381,6 +2385,7 @@ fn apply_inherit(style: &mut ComputedStyle, prop: &str, parent: &ComputedStyle) 
         "caption-side" => style.caption_side = parent.caption_side,
         "caret-color" => style.caret_color = parent.caret_color,
         "color-scheme" => style.color_scheme = parent.color_scheme,
+        "order" => style.order = parent.order,
         _ => {}
     }
 }
@@ -2411,6 +2416,7 @@ fn apply_initial(style: &mut ComputedStyle, prop: &str) {
         "white-space" => style.white_space = def.white_space,
         "vertical-align" => style.vertical_align = def.vertical_align,
         "visibility" => style.visibility = def.visibility,
+        "order" => style.order = def.order,
         "box-sizing" => style.box_sizing = def.box_sizing,
         "margin" => style.margin = def.margin,
         "padding" => style.padding = def.padding,

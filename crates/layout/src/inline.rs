@@ -107,10 +107,45 @@ pub fn layout_inline_content(
 
         // Update the box model position for this inline item.
         if let Some(b) = tree.get_mut(child_id) {
-            b.box_model.content_box = Rect::new(cursor_x, cursor_y, child_width, child_height);
-            b.box_model.border_box = b.box_model.content_box;
-            b.box_model.padding_box = b.box_model.content_box;
-            b.box_model.margin_box = b.box_model.content_box;
+            if b.kind == LayoutBoxKind::Inline {
+                // Inline elements: decompose measured width into proper box model rects.
+                // measure_inline_box returns child_width = content + padding + border + margin.
+                let p = b.computed_style.padding;
+                let bw = b.computed_style.border_widths();
+                let m = b.computed_style.margin;
+                let ml = if m.left.is_finite() { m.left } else { 0.0 };
+                let mr = if m.right.is_finite() { m.right } else { 0.0 };
+                let content_w = (child_width - p.left - p.right - bw.left - bw.right - ml - mr).max(0.0);
+                b.box_model.content_box = Rect::new(
+                    cursor_x + ml + bw.left + p.left,
+                    cursor_y,
+                    content_w,
+                    child_height,
+                );
+                b.box_model.padding_box = Rect::new(
+                    cursor_x + ml + bw.left,
+                    cursor_y - p.top,
+                    content_w + p.left + p.right,
+                    child_height + p.top + p.bottom,
+                );
+                b.box_model.border_box = Rect::new(
+                    cursor_x + ml,
+                    cursor_y - p.top - bw.top,
+                    content_w + p.left + p.right + bw.left + bw.right,
+                    child_height + p.top + p.bottom + bw.top + bw.bottom,
+                );
+                b.box_model.margin_box = Rect::new(
+                    cursor_x,
+                    cursor_y - p.top - bw.top,
+                    child_width,
+                    child_height + p.top + p.bottom + bw.top + bw.bottom,
+                );
+            } else {
+                b.box_model.content_box = Rect::new(cursor_x, cursor_y, child_width, child_height);
+                b.box_model.border_box = b.box_model.content_box;
+                b.box_model.padding_box = b.box_model.content_box;
+                b.box_model.margin_box = b.box_model.content_box;
+            }
         }
 
         // For inline elements (e.g. <a>, <span>), position their children

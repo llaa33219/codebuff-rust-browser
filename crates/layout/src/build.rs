@@ -186,13 +186,13 @@ fn wrap_inline_children(
 ) -> Vec<LayoutBoxId> {
     let has_block = children.iter().any(|&c| {
         tree.get(c)
-            .map(|b| is_block_level(b.kind))
+            .map(|b| is_box_block_level(b))
             .unwrap_or(false)
     });
 
     let has_inline = children.iter().any(|&c| {
         tree.get(c)
-            .map(|b| !is_block_level(b.kind))
+            .map(|b| !is_box_block_level(b))
             .unwrap_or(false)
     });
 
@@ -207,7 +207,7 @@ fn wrap_inline_children(
     for &child_id in children {
         let is_block = tree
             .get(child_id)
-            .map(|b| is_block_level(b.kind))
+            .map(|b| is_box_block_level(b))
             .unwrap_or(false);
 
         if is_block {
@@ -232,8 +232,15 @@ fn wrap_inline_children(
     result
 }
 
-fn is_block_level(kind: LayoutBoxKind) -> bool {
-    matches!(kind, LayoutBoxKind::Block | LayoutBoxKind::Flex | LayoutBoxKind::Grid)
+/// Check if a layout box is block-level, considering the CSS display property.
+/// Correctly handles inline-flex and inline-grid elements which have Flex/Grid
+/// kinds but inline-level display.
+fn is_box_block_level(b: &LayoutBox) -> bool {
+    match b.kind {
+        LayoutBoxKind::Block | LayoutBoxKind::Anonymous => true,
+        LayoutBoxKind::Inline | LayoutBoxKind::InlineBlock | LayoutBoxKind::TextRun => false,
+        LayoutBoxKind::Flex | LayoutBoxKind::Grid => b.computed_style.display.is_block_level(),
+    }
 }
 
 /// Create an anonymous block box that wraps the given inline children.

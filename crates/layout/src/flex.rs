@@ -50,6 +50,29 @@ pub fn layout_flex(tree: &mut LayoutTree, container_id: LayoutBoxId, available_w
         if is_abs {
             continue;
         }
+
+        // Estimate content width for items without explicit width/basis.
+        let content_estimate: f32 = {
+            let child_children = tree.children(child_id);
+            let mut w = 0.0f32;
+            for &cc in &child_children {
+                if let Some(cb) = tree.get(cc) {
+                    w += cb.computed_style.width.unwrap_or_else(|| {
+                        cb.text.as_ref()
+                            .map(|t| t.chars().count() as f32 * cb.computed_style.font_size_px * 0.6)
+                            .unwrap_or(0.0)
+                    });
+                }
+            }
+            if let Some(b) = tree.get(child_id) {
+                let p = b.computed_style.padding.left + b.computed_style.padding.right;
+                let bw = b.computed_style.border_widths().left + b.computed_style.border_widths().right;
+                w + p + bw
+            } else {
+                w
+            }
+        };
+
         let (basis, grow, shrink) = {
             let b = match tree.get(child_id) {
                 Some(b) => b,
@@ -58,7 +81,7 @@ pub fn layout_flex(tree: &mut LayoutTree, container_id: LayoutBoxId, available_w
             let s = &b.computed_style;
             let basis = s.flex.basis.unwrap_or_else(|| {
                 if is_row {
-                    s.width.unwrap_or(0.0)
+                    s.width.unwrap_or(content_estimate)
                 } else {
                     s.height.unwrap_or(s.line_height_px)
                 }
@@ -79,6 +102,13 @@ pub fn layout_flex(tree: &mut LayoutTree, container_id: LayoutBoxId, available_w
     if items.is_empty() {
         return 0.0;
     }
+
+    // Sort items by CSS `order` property (stable sort preserves DOM order for equal values).
+    items.sort_by_key(|item| {
+        tree.get(item.box_id)
+            .map(|b| b.computed_style.order)
+            .unwrap_or(0)
+    });
 
     // Step 3: Group items into lines based on flex-wrap.
     let lines: Vec<Vec<usize>> = if wrap == FlexWrap::NoWrap {

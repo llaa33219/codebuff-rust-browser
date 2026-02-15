@@ -1056,6 +1056,9 @@ pub struct ComputedStyle {
     pub visibility: Visibility,
     pub cursor: Cursor,
 
+    // -- Order (flex/grid) --
+    pub order: i32,
+
     // -- List --
     pub list_style_type: ListStyleType,
     pub is_list_item: bool,
@@ -1228,6 +1231,8 @@ impl Default for ComputedStyle {
             opacity: 1.0,
             visibility: Visibility::Visible,
             cursor: Cursor::Auto,
+
+            order: 0,
 
             list_style_type: ListStyleType::None,
             is_list_item: false,
