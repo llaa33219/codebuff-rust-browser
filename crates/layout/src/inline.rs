@@ -339,27 +339,35 @@ fn measure_inline_box(tree: &LayoutTree, box_id: LayoutBoxId, _available_width: 
         LayoutBoxKind::Inline => {
             // For inline elements, use specified width or fallback.
             match b.computed_style.width {
-                Some(w) => (w, line_height),
+                Some(w) => {
+                    let max_child_h: f32 = b.children.iter()
+                        .map(|&c| measure_inline_box(tree, c, _available_width).1)
+                        .fold(0.0f32, f32::max);
+                    (w, line_height.max(max_child_h))
+                }
                 None => {
-                    // Sum children widths (simplified).
-                    let children_width: f32 = b
-                        .children
-                        .iter()
-                        .map(|&c| measure_inline_box(tree, c, _available_width).0)
-                        .sum();
+                    // Sum children widths and track max height.
+                    let mut children_width = 0.0f32;
+                    let mut max_child_h = 0.0f32;
+                    for &c in &b.children {
+                        let (cw, ch) = measure_inline_box(tree, c, _available_width);
+                        children_width += cw;
+                        max_child_h = max_child_h.max(ch);
+                    }
                     let p = b.computed_style.padding.left + b.computed_style.padding.right;
                     let bw = b.computed_style.border_widths().left + b.computed_style.border_widths().right;
                     let ml = b.computed_style.margin.left;
                     let mr = b.computed_style.margin.right;
                     let m = if ml.is_finite() { ml } else { 0.0 } + if mr.is_finite() { mr } else { 0.0 };
-                    ((children_width + p + bw + m).max(0.0), line_height)
+                    ((children_width + p + bw + m).max(0.0), line_height.max(max_child_h))
                 }
             }
         }
         LayoutBoxKind::InlineBlock => {
-            let w = match b.computed_style.width {
-                Some(w) => w,
-                None => {
+            let w = match (b.computed_style.width, b.computed_style.width_pct) {
+                (Some(w), _) => w,
+                (None, Some(pct)) => _available_width * pct / 100.0,
+                _ => {
                     // Shrink-to-fit: estimate from children's measured widths.
                     let children_w: f32 = b.children.iter()
                         .map(|&c| measure_inline_box(tree, c, _available_width).0)

@@ -569,15 +569,19 @@ fn paint_text(layout_box: &LayoutBox, list: &mut DisplayList) {
     } else {
         let extra_letter = style.letter_spacing;
         let extra_word = style.word_spacing;
+        let tab_width = style.tab_size * avg_char_width;
         for ch in text.chars() {
             glyphs.push(PositionedGlyph {
                 glyph_id: ch as u16,
                 x: content_box.x + x_offset,
                 y: content_box.y + y_offset,
             });
-            x_offset += avg_char_width + extra_letter;
-            if ch == ' ' {
-                x_offset += extra_word;
+            if ch == '\t' {
+                x_offset += tab_width;
+            } else if ch == ' ' {
+                x_offset += avg_char_width + extra_letter + extra_word;
+            } else {
+                x_offset += avg_char_width + extra_letter;
             }
         }
     }

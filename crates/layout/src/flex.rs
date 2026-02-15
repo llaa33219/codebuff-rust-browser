@@ -261,7 +261,18 @@ pub fn layout_flex(tree: &mut LayoutTree, container_id: LayoutBoxId, available_w
         let mut line_main_used = 0.0f32;
         for &idx in &ordered {
             let item = &items[idx];
-            let aligned_cross = match align_items {
+            let effective_align = tree.get(item.box_id)
+                .map(|b| b.computed_style.align_self)
+                .unwrap_or(style::AlignSelf::Auto);
+            let resolved_align = match effective_align {
+                style::AlignSelf::Auto => align_items,
+                style::AlignSelf::FlexStart => AlignItems::FlexStart,
+                style::AlignSelf::FlexEnd => AlignItems::FlexEnd,
+                style::AlignSelf::Center => AlignItems::Center,
+                style::AlignSelf::Baseline => AlignItems::Baseline,
+                style::AlignSelf::Stretch => AlignItems::Stretch,
+            };
+            let aligned_cross = match resolved_align {
                 AlignItems::FlexStart => 0.0,
                 AlignItems::FlexEnd => line_cross - item.cross_size,
                 AlignItems::Center => (line_cross - item.cross_size) / 2.0,
@@ -287,7 +298,7 @@ pub fn layout_flex(tree: &mut LayoutTree, container_id: LayoutBoxId, available_w
                 b.box_model.margin_box.x += dx;
                 b.box_model.margin_box.y += dy;
 
-                if align_items == AlignItems::Stretch {
+                if resolved_align == AlignItems::Stretch {
                     if is_row {
                         let dh = line_cross - b.box_model.border_box.h;
                         if dh > 0.0 {

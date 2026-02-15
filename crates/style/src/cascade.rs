@@ -735,21 +735,84 @@ pub fn apply_declaration(
         }
 
         "border-style" => {
-            if let Some(kw) = first_keyword(&decl.value) {
-                let bs = parse_border_style(kw);
-                style.border.top.style = bs;
-                style.border.right.style = bs;
-                style.border.bottom.style = bs;
-                style.border.left.style = bs;
+            let styles: Vec<BorderStyle> = decl.value.iter().filter_map(|v| {
+                match v {
+                    CssValue::Keyword(kw) => Some(parse_border_style(kw)),
+                    CssValue::None => Some(BorderStyle::None),
+                    _ => None,
+                }
+            }).collect();
+            match styles.len() {
+                1 => {
+                    style.border.top.style = styles[0];
+                    style.border.right.style = styles[0];
+                    style.border.bottom.style = styles[0];
+                    style.border.left.style = styles[0];
+                }
+                2 => {
+                    style.border.top.style = styles[0];
+                    style.border.bottom.style = styles[0];
+                    style.border.right.style = styles[1];
+                    style.border.left.style = styles[1];
+                }
+                3 => {
+                    style.border.top.style = styles[0];
+                    style.border.right.style = styles[1];
+                    style.border.left.style = styles[1];
+                    style.border.bottom.style = styles[2];
+                }
+                4 => {
+                    style.border.top.style = styles[0];
+                    style.border.right.style = styles[1];
+                    style.border.bottom.style = styles[2];
+                    style.border.left.style = styles[3];
+                }
+                _ => {}
             }
         }
 
         "border-color" => {
-            if let Some(c) = first_color_or_current(&decl.value, style.color) {
-                style.border.top.color = c;
-                style.border.right.color = c;
-                style.border.bottom.color = c;
-                style.border.left.color = c;
+            let colors: Vec<Color> = decl.value.iter().filter_map(|v| {
+                match v {
+                    CssValue::Color(c) => Some(css_color_to_color(c)),
+                    CssValue::Keyword(kw) if kw == "currentcolor" => Some(style.color),
+                    CssValue::Keyword(kw) if kw == "transparent" => Some(Color::TRANSPARENT),
+                    CssValue::Keyword(kw) => resolve_system_color(kw),
+                    CssValue::Function { name, args } => {
+                        let lower = name.to_ascii_lowercase();
+                        if lower == "rgba" || lower == "rgb" {
+                            parse_function_color(&lower, args)
+                        } else { None }
+                    }
+                    _ => None,
+                }
+            }).collect();
+            match colors.len() {
+                1 => {
+                    style.border.top.color = colors[0];
+                    style.border.right.color = colors[0];
+                    style.border.bottom.color = colors[0];
+                    style.border.left.color = colors[0];
+                }
+                2 => {
+                    style.border.top.color = colors[0];
+                    style.border.bottom.color = colors[0];
+                    style.border.right.color = colors[1];
+                    style.border.left.color = colors[1];
+                }
+                3 => {
+                    style.border.top.color = colors[0];
+                    style.border.right.color = colors[1];
+                    style.border.left.color = colors[1];
+                    style.border.bottom.color = colors[2];
+                }
+                4 => {
+                    style.border.top.color = colors[0];
+                    style.border.right.color = colors[1];
+                    style.border.bottom.color = colors[2];
+                    style.border.left.color = colors[3];
+                }
+                _ => {}
             }
         }
 
@@ -757,7 +820,7 @@ pub fn apply_declaration(
             // Per CSS spec, shorthand resets omitted values to initial.
             // Initial border-color is currentColor, initial border-width is
             // medium (3px), initial border-style is none.
-            let reset = BorderSide { width: 0.0, style: BorderStyle::None, color: style.color };
+            let reset = BorderSide { width: 3.0, style: BorderStyle::None, color: style.color };
             style.border.top = reset;
             style.border.right = reset;
             style.border.bottom = reset;
@@ -1252,10 +1315,22 @@ pub fn apply_declaration(
             }
         }
 
-        "border-top" => apply_border_side_shorthand(&decl.value, &mut style.border.top, style.font_size_px, style.color),
-        "border-right" => apply_border_side_shorthand(&decl.value, &mut style.border.right, style.font_size_px, style.color),
-        "border-bottom" => apply_border_side_shorthand(&decl.value, &mut style.border.bottom, style.font_size_px, style.color),
-        "border-left" => apply_border_side_shorthand(&decl.value, &mut style.border.left, style.font_size_px, style.color),
+        "border-top" => {
+            style.border.top = BorderSide { width: 3.0, style: BorderStyle::None, color: style.color };
+            apply_border_side_shorthand(&decl.value, &mut style.border.top, style.font_size_px, style.color);
+        }
+        "border-right" => {
+            style.border.right = BorderSide { width: 3.0, style: BorderStyle::None, color: style.color };
+            apply_border_side_shorthand(&decl.value, &mut style.border.right, style.font_size_px, style.color);
+        }
+        "border-bottom" => {
+            style.border.bottom = BorderSide { width: 3.0, style: BorderStyle::None, color: style.color };
+            apply_border_side_shorthand(&decl.value, &mut style.border.bottom, style.font_size_px, style.color);
+        }
+        "border-left" => {
+            style.border.left = BorderSide { width: 3.0, style: BorderStyle::None, color: style.color };
+            apply_border_side_shorthand(&decl.value, &mut style.border.left, style.font_size_px, style.color);
+        }
 
         "align-self" => {
             if let Some(kw) = first_keyword(&decl.value) {
