@@ -23,20 +23,20 @@ pub const TAB_MIN_WIDTH: u32 = 80;
 // Colors (ARGB format)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const COLOR_TAB_BAR_BG: u32 = 0xFF_DEDEDE;
+const COLOR_TAB_BAR_BG: u32 = 0xFF_DEE1E6;
 const COLOR_TAB_ACTIVE: u32 = 0xFF_FFFFFF;
-const COLOR_TAB_INACTIVE: u32 = 0xFF_C8C8C8;
-const COLOR_TAB_TEXT: u32 = 0xFF_333333;
-const COLOR_NAV_BAR_BG: u32 = 0xFF_F0F0F0;
-const COLOR_NAV_BUTTON: u32 = 0xFF_E0E0E0;
-const COLOR_NAV_BUTTON_TEXT: u32 = 0xFF_555555;
-const COLOR_URL_BAR_BG: u32 = 0xFF_FFFFFF;
-const COLOR_URL_BAR_BORDER: u32 = 0xFF_CCCCCC;
-const COLOR_URL_BAR_FOCUSED: u32 = 0xFF_4488FF;
-const COLOR_URL_TEXT: u32 = 0xFF_333333;
-const COLOR_URL_CURSOR: u32 = 0xFF_000000;
-const COLOR_STATUS_BAR_BG: u32 = 0xFF_F5F5F5;
-const COLOR_STATUS_TEXT: u32 = 0xFF_888888;
+const COLOR_TAB_INACTIVE: u32 = 0xFF_D3D6DB;
+const COLOR_TAB_TEXT: u32 = 0xFF_202124;
+const COLOR_NAV_BAR_BG: u32 = 0xFF_FFFFFF;
+const COLOR_NAV_BUTTON: u32 = 0xFF_F1F3F4;
+const COLOR_NAV_BUTTON_TEXT: u32 = 0xFF_5F6368;
+const COLOR_URL_BAR_BG: u32 = 0xFF_F1F3F4;
+const COLOR_URL_BAR_BORDER: u32 = 0xFF_DADCE0;
+const COLOR_URL_BAR_FOCUSED: u32 = 0xFF_1A73E8;
+const COLOR_URL_TEXT: u32 = 0xFF_202124;
+const COLOR_URL_CURSOR: u32 = 0xFF_202124;
+const COLOR_STATUS_BAR_BG: u32 = 0xFF_F8F9FA;
+const COLOR_STATUS_TEXT: u32 = 0xFF_5F6368;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ChromeState
@@ -184,61 +184,78 @@ fn render_tab_bar(
     let active_id = shell.tab_manager.active_tab_id();
     let tab_width = compute_tab_width(tabs.len(), state.width);
 
+    let cw = fb.width as i32;
+    let ch = fb.height as i32;
+
     for (i, tab) in tabs.iter().enumerate() {
         let tx = (i as u32) * tab_width;
         let is_active = active_id == Some(tab.id);
         let color = if is_active { COLOR_TAB_ACTIVE } else { COLOR_TAB_INACTIVE };
 
-        // Tab background
-        fb.fill_rect(tx as i32 + 1, 2, tab_width.saturating_sub(2), TAB_BAR_HEIGHT - 2, color);
+        // Tab background (active tabs get rounded top corners)
+        if is_active {
+            fb.fill_rounded_rect(
+                tx as i32 + 1, 2, tab_width.saturating_sub(2), TAB_BAR_HEIGHT - 2,
+                [8.0, 8.0, 0.0, 0.0], color, 0, 0, cw, ch,
+            );
+        } else {
+            fb.fill_rounded_rect(
+                tx as i32 + 2, 6, tab_width.saturating_sub(4), TAB_BAR_HEIGHT - 6,
+                [6.0, 6.0, 0.0, 0.0], color, 0, 0, cw, ch,
+            );
+        }
 
         // Tab title (leave room for close button)
         let title = if tab.title.is_empty() { "New Tab" } else { &tab.title };
-        draw_chrome_text(fb, tx as i32 + 8, 10, title, COLOR_TAB_TEXT, 12, tab_width.saturating_sub(28), &mut font_engine);
+        let title_y = if is_active { 10 } else { 12 };
+        draw_chrome_text(fb, tx as i32 + 10, title_y, title, COLOR_TAB_TEXT, 12, tab_width.saturating_sub(30), &mut font_engine);
 
         // Close button "×"
         let close_x = tx + tab_width.saturating_sub(20);
-        draw_chrome_text(fb, close_x as i32, 8, "x", 0xFF_888888, 12, 16, &mut font_engine);
+        draw_chrome_text(fb, close_x as i32, title_y, "x", 0xFF_9AA0A6, 11, 16, &mut font_engine);
     }
 
     // New tab "+" button
     let plus_x = (tabs.len() as u32) * tab_width;
-    fb.fill_rect(plus_x as i32 + 2, 4, BUTTON_SIZE - 4, BUTTON_SIZE - 4, COLOR_NAV_BUTTON);
-    draw_chrome_text(fb, plus_x as i32 + 10, 10, "+", COLOR_NAV_BUTTON_TEXT, 14, BUTTON_SIZE, &mut font_engine);
+    fb.fill_rounded_rect(plus_x as i32 + 4, 8, 24, 24, [12.0; 4], COLOR_NAV_BUTTON, 0, 0, cw, ch);
+    draw_chrome_text(fb, plus_x as i32 + 11, 12, "+", COLOR_NAV_BUTTON_TEXT, 14, 24, &mut font_engine);
 }
 
 fn render_nav_bar(fb: &mut Framebuffer, state: &ChromeState, mut font_engine: Option<&mut FontEngine>) {
     let y = TAB_BAR_HEIGHT as i32;
+    let cw = fb.width as i32;
+    let ch = fb.height as i32;
 
     // Background
     fb.fill_rect(0, y, state.width, NAV_BAR_HEIGHT, COLOR_NAV_BAR_BG);
 
-    // Back button
-    fb.fill_rect(4, y + 4, BUTTON_SIZE, BUTTON_SIZE, COLOR_NAV_BUTTON);
-    draw_chrome_text(fb, 12, y as u32 + 12, "<", COLOR_NAV_BUTTON_TEXT, 14, BUTTON_SIZE, &mut font_engine);
+    // Back button (rounded)
+    fb.fill_rounded_rect(4, y + 4, BUTTON_SIZE, BUTTON_SIZE, [6.0; 4], COLOR_NAV_BUTTON, 0, 0, cw, ch);
+    draw_chrome_text(fb, 10, y as u32 + 12, "\u{2190}", COLOR_NAV_BUTTON_TEXT, 14, BUTTON_SIZE, &mut font_engine);
 
-    // Forward button
+    // Forward button (rounded)
     let fx = BUTTON_SIZE + 8;
-    fb.fill_rect(fx as i32, y + 4, BUTTON_SIZE, BUTTON_SIZE, COLOR_NAV_BUTTON);
-    draw_chrome_text(fb, fx as i32 + 8, y as u32 + 12, ">", COLOR_NAV_BUTTON_TEXT, 14, BUTTON_SIZE, &mut font_engine);
+    fb.fill_rounded_rect(fx as i32, y + 4, BUTTON_SIZE, BUTTON_SIZE, [6.0; 4], COLOR_NAV_BUTTON, 0, 0, cw, ch);
+    draw_chrome_text(fb, fx as i32 + 8, y as u32 + 12, "\u{2192}", COLOR_NAV_BUTTON_TEXT, 14, BUTTON_SIZE, &mut font_engine);
 
-    // Reload button
+    // Reload button (rounded)
     let rx = 2 * BUTTON_SIZE + 12;
-    fb.fill_rect(rx as i32, y + 4, BUTTON_SIZE, BUTTON_SIZE, COLOR_NAV_BUTTON);
-    draw_chrome_text(fb, rx as i32 + 8, y as u32 + 12, "R", COLOR_NAV_BUTTON_TEXT, 14, BUTTON_SIZE, &mut font_engine);
+    fb.fill_rounded_rect(rx as i32, y + 4, BUTTON_SIZE, BUTTON_SIZE, [6.0; 4], COLOR_NAV_BUTTON, 0, 0, cw, ch);
+    draw_chrome_text(fb, rx as i32 + 8, y as u32 + 12, "\u{21BB}", COLOR_NAV_BUTTON_TEXT, 14, BUTTON_SIZE, &mut font_engine);
 
-    // URL bar
+    // URL bar (pill-shaped)
     let url_x = 3 * BUTTON_SIZE + 20;
     let url_w = state.width.saturating_sub(url_x + 8);
-    let border_color = if state.url_focused { COLOR_URL_BAR_FOCUSED } else { COLOR_URL_BAR_BORDER };
 
-    // Border
-    fb.fill_rect(url_x as i32 - 1, y + 3, url_w + 2, BUTTON_SIZE + 2, border_color);
-    // Background
-    fb.fill_rect(url_x as i32, y + 4, url_w, BUTTON_SIZE, COLOR_URL_BAR_BG);
+    // Focused: blue border ring (slightly larger radii for uniform border thickness)
+    if state.url_focused {
+        fb.fill_rounded_rect(url_x as i32 - 2, y + 2, url_w + 4, BUTTON_SIZE + 4, [22.0; 4], COLOR_URL_BAR_FOCUSED, 0, 0, cw, ch);
+    }
+    // Background pill
+    fb.fill_rounded_rect(url_x as i32, y + 4, url_w, BUTTON_SIZE, [20.0; 4], COLOR_URL_BAR_BG, 0, 0, cw, ch);
 
     // URL text
-    draw_chrome_text(fb, url_x as i32 + 4, (y + 12) as u32, &state.url_text, COLOR_URL_TEXT, 13, url_w.saturating_sub(8), &mut font_engine);
+    draw_chrome_text(fb, url_x as i32 + 12, (y + 12) as u32, &state.url_text, COLOR_URL_TEXT, 13, url_w.saturating_sub(24), &mut font_engine);
 
     // Cursor (when focused)
     if state.url_focused {
@@ -248,9 +265,12 @@ fn render_nav_bar(fb: &mut Framebuffer, state: &ChromeState, mut font_engine: Op
         } else {
             (state.url_cursor as i32) * 8
         };
-        let cursor_x = url_x as i32 + 4 + cursor_px;
-        fb.fill_rect(cursor_x, y + 8, 1, 20, COLOR_URL_CURSOR);
+        let cursor_x = url_x as i32 + 12 + cursor_px;
+        fb.fill_rect(cursor_x, y + 8, 2, 20, COLOR_URL_CURSOR);
     }
+
+    // Bottom border
+    fb.fill_rect(0, y + NAV_BAR_HEIGHT as i32 - 1, state.width, 1, COLOR_URL_BAR_BORDER);
 }
 
 fn render_status_bar(fb: &mut Framebuffer, state: &ChromeState, mut font_engine: Option<&mut FontEngine>) {

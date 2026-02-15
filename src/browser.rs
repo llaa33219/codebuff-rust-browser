@@ -79,23 +79,25 @@ const UA_CSS: &str = "
 fn default_homepage_html() -> &'static str {
     r#"<html><head><title>New Tab \u2014 Rust Browser</title>
 <style>
-body { background: #f8f9fa; color: #333; text-align: center; padding: 60px 20px; }
-h1 { font-size: 42px; color: #1a73e8; margin: 0 0 8px 0; }
-p { font-size: 17px; color: #666; margin: 8px 0; }
-.sub { font-size: 14px; color: #999; margin-top: 4px; }
-.features { text-align: left; max-width: 480px; margin: 32px auto; background: #ffffff; padding: 20px 28px; border: 1px solid #e0e0e0; }
-.features h2 { font-size: 18px; color: #333; margin: 0 0 12px 0; }
-.features li { margin: 5px 0; font-size: 14px; color: #555; }
+body { background: #f0f4f8; color: #1a202c; text-align: center; padding: 80px 20px; }
+h1 { font-size: 48px; color: #1a73e8; margin: 0 0 12px 0; }
+.tagline { font-size: 18px; color: #4a5568; margin: 4px 0; }
+.sub { font-size: 14px; color: #a0aec0; margin: 4px 0 24px 0; }
+.hint { font-size: 14px; color: #718096; margin: 20px 0; padding: 10px 20px; background: #edf2f7; display: inline-block; border-radius: 6px; }
+.features { text-align: left; max-width: 520px; margin: 28px auto 0 auto; background: #ffffff; padding: 24px 32px; border: 1px solid #e2e8f0; }
+.features h2 { font-size: 16px; color: #2d3748; margin: 0 0 16px 0; text-transform: uppercase; letter-spacing: 1px; }
+.features li { margin: 6px 0; font-size: 14px; color: #4a5568; line-height: 20px; }
 </style></head><body>
 <h1>Rust Browser</h1>
-<p>Built 100% from scratch in Rust</p>
+<p class="tagline">Built 100% from scratch in Rust</p>
 <p class="sub">Zero external dependencies</p>
-<p>Press Ctrl+L to focus the URL bar and start browsing</p>
+<p class="hint">Press Ctrl+L to focus the URL bar and start browsing</p>
 <div class="features"><h2>Engine Features</h2><ul>
 <li>HTML5 parser with tree construction</li>
 <li>CSS3 selector matching and cascade</li>
 <li>Block, inline, flexbox, and grid layout</li>
-<li>TrueType font rendering</li>
+<li>CSS transforms, filters, and blend modes</li>
+<li>TrueType font rendering with glyph atlas</li>
 <li>PNG, JPEG, WebP, GIF, BMP image decoding</li>
 <li>TLS 1.3 with AES-GCM encryption</li>
 <li>HTTP/1.1 and HTTP/2 protocols</li>
@@ -1359,6 +1361,13 @@ fn offset_display_item(item: &DisplayItem, dy: f32) -> DisplayItem {
         },
 
         DisplayItem::PopOpacity => DisplayItem::PopOpacity,
+
+        DisplayItem::PushTransform { tx, ty } => DisplayItem::PushTransform {
+            tx: *tx,
+            ty: *ty,
+        },
+
+        DisplayItem::PopTransform => DisplayItem::PopTransform,
     }
 }
 

@@ -90,6 +90,15 @@ pub enum DisplayItem {
 
     /// Pop the most recent opacity layer.
     PopOpacity,
+
+    /// Push a 2D translate transform.
+    PushTransform {
+        tx: f32,
+        ty: f32,
+    },
+
+    /// Pop the most recent transform.
+    PopTransform,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -164,6 +173,13 @@ fn paint_layout_box(tree: &LayoutTree, box_id: LayoutBoxId, list: &mut DisplayLi
         list.push(DisplayItem::PushOpacity { opacity: 1.0 });
     }
 
+    // Handle CSS transforms (translate).
+    let (tx, ty) = compute_transform_translate(&style.transform);
+    let needs_transform = tx != 0.0 || ty != 0.0;
+    if needs_transform {
+        list.push(DisplayItem::PushTransform { tx, ty });
+    }
+
     // Handle overflow clipping (includes contain: paint).
     let needs_clip = matches!(style.overflow_x, Overflow::Hidden | Overflow::Scroll)
         || matches!(style.overflow_y, Overflow::Hidden | Overflow::Scroll)
@@ -193,7 +209,7 @@ fn paint_layout_box(tree: &LayoutTree, box_id: LayoutBoxId, list: &mut DisplayLi
         if layout_box.kind == LayoutBoxKind::Block
             && layout_box.computed_style.list_style_type != style::ListStyleType::None
         {
-            paint_list_marker(layout_box, list);
+            paint_list_marker(tree, box_id, layout_box, list);
         }
     }
 
@@ -210,9 +226,12 @@ fn paint_layout_box(tree: &LayoutTree, box_id: LayoutBoxId, list: &mut DisplayLi
         }
     }
 
-    // Pop clip/opacity/isolation.
+    // Pop clip/transform/opacity/isolation.
     if needs_clip {
         list.push(DisplayItem::PopClip);
+    }
+    if needs_transform {
+        list.push(DisplayItem::PopTransform);
     }
     if needs_isolation {
         list.push(DisplayItem::PopOpacity);
@@ -493,6 +512,27 @@ fn paint_text(layout_box: &LayoutBox, list: &mut DisplayList) {
     }
 
     let style = &layout_box.computed_style;
+
+    // Apply text-transform.
+    let text = match style.text_transform {
+        style::TextTransform::Uppercase => text.to_uppercase(),
+        style::TextTransform::Lowercase => text.to_lowercase(),
+        style::TextTransform::Capitalize => {
+            let mut result = String::with_capacity(text.len());
+            let mut prev_space = true;
+            for ch in text.chars() {
+                if prev_space && ch.is_alphabetic() {
+                    for c in ch.to_uppercase() { result.push(c); }
+                } else {
+                    result.push(ch);
+                }
+                prev_space = ch.is_whitespace();
+            }
+            result
+        }
+        style::TextTransform::None => text,
+    };
+
     let content_box = layout_box.box_model.content_box;
 
     // Apply filter color effects to text color.
@@ -647,47 +687,132 @@ fn paint_text(layout_box: &LayoutBox, list: &mut DisplayList) {
     }
 }
 
-/// Paint list markers (bullets, circles, squares) for list-item elements.
-fn paint_list_marker(layout_box: &LayoutBox, list: &mut DisplayList) {
+/// Paint list markers (bullets, circles, squares, numbers) for list-item elements.
+fn paint_list_marker(tree: &LayoutTree, box_id: LayoutBoxId, layout_box: &LayoutBox, list: &mut DisplayList) {
     let style = &layout_box.computed_style;
     let content_box = layout_box.box_model.content_box;
     let font_size = style.font_size_px;
-    let marker_x = content_box.x - font_size * 1.2;
-    let r = font_size * 0.15;
-    let cx = marker_x + font_size * 0.3;
-    let cy = content_box.y + font_size * 0.55;
     let marker_color = style.accent_color.unwrap_or(style.color);
 
     match style.list_style_type {
         style::ListStyleType::Disc => {
-            list.push(DisplayItem::SolidRect {
-                rect: Rect::new(cx - r, cy - r, r * 2.0, r * 2.0),
+            let marker_x = content_box.x - font_size * 1.0;
+            list.push(DisplayItem::TextRun {
+                rect: Rect::new(marker_x, content_box.y, font_size * 0.6, font_size * 1.2),
+                text: "\u{2022}".to_string(),
                 color: marker_color,
+                font_size,
+                glyphs: vec![PositionedGlyph {
+                    glyph_id: 0x2022,
+                    x: marker_x,
+                    y: content_box.y + font_size,
+                }],
             });
         }
         style::ListStyleType::Circle => {
-            let thickness = 1.0f32;
-            list.push(DisplayItem::Border {
-                rect: Rect::new(cx - r, cy - r, r * 2.0, r * 2.0),
-                widths: [thickness; 4],
-                colors: [marker_color; 4],
-                styles: [style::BorderStyle::Solid; 4],
+            let marker_x = content_box.x - font_size * 1.0;
+            list.push(DisplayItem::TextRun {
+                rect: Rect::new(marker_x, content_box.y, font_size * 0.6, font_size * 1.2),
+                text: "\u{25E6}".to_string(),
+                color: marker_color,
+                font_size,
+                glyphs: vec![PositionedGlyph {
+                    glyph_id: 0x25E6,
+                    x: marker_x,
+                    y: content_box.y + font_size,
+                }],
             });
         }
         style::ListStyleType::Square => {
-            list.push(DisplayItem::SolidRect {
-                rect: Rect::new(cx - r, cy - r, r * 2.0, r * 2.0),
+            let marker_x = content_box.x - font_size * 1.0;
+            list.push(DisplayItem::TextRun {
+                rect: Rect::new(marker_x, content_box.y, font_size * 0.6, font_size * 1.2),
+                text: "\u{25AA}".to_string(),
                 color: marker_color,
+                font_size,
+                glyphs: vec![PositionedGlyph {
+                    glyph_id: 0x25AA,
+                    x: marker_x,
+                    y: content_box.y + font_size,
+                }],
             });
         }
         style::ListStyleType::Decimal => {
-            list.push(DisplayItem::SolidRect {
-                rect: Rect::new(cx - r, cy - r, r * 2.0, r * 2.0),
+            let index = count_list_item_index(tree, box_id);
+            let num_text = format!("{}.", index);
+            let char_w = font_size * 0.6;
+            let num_width = num_text.len() as f32 * char_w;
+            let text_x = content_box.x - num_width - font_size * 0.2;
+            let mut glyphs = Vec::new();
+            let mut gx = 0.0f32;
+            for ch in num_text.chars() {
+                glyphs.push(PositionedGlyph {
+                    glyph_id: ch as u16,
+                    x: text_x + gx,
+                    y: content_box.y + font_size,
+                });
+                gx += char_w;
+            }
+            list.push(DisplayItem::TextRun {
+                rect: Rect::new(text_x, content_box.y, num_width, font_size * 1.2),
+                text: num_text,
                 color: marker_color,
+                font_size,
+                glyphs,
             });
         }
         style::ListStyleType::None => {}
     }
+}
+
+/// Count the 1-based index of a list-item among its siblings.
+fn count_list_item_index(tree: &LayoutTree, box_id: LayoutBoxId) -> u32 {
+    if let Some(parent_id) = find_parent_box(tree, box_id) {
+        let siblings = tree.children(parent_id);
+        let mut index = 0u32;
+        for &sibling_id in &siblings {
+            if tree.get(sibling_id)
+                .map(|b| b.computed_style.list_style_type != style::ListStyleType::None)
+                .unwrap_or(false)
+            {
+                index += 1;
+            }
+            if sibling_id == box_id { return index; }
+        }
+    }
+    1
+}
+
+/// Find the parent of a layout box by searching the tree.
+fn find_parent_box(tree: &LayoutTree, target: LayoutBoxId) -> Option<LayoutBoxId> {
+    tree.root.and_then(|root| find_parent_recursive(tree, root, target))
+}
+
+fn find_parent_recursive(tree: &LayoutTree, current: LayoutBoxId, target: LayoutBoxId) -> Option<LayoutBoxId> {
+    let children = tree.children(current);
+    for &child in &children {
+        if child == target { return Some(current); }
+        if let Some(found) = find_parent_recursive(tree, child, target) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Compute the net translation from a list of CSS transform functions.
+fn compute_transform_translate(transforms: &[style::TransformFunction]) -> (f32, f32) {
+    let mut tx = 0.0f32;
+    let mut ty = 0.0f32;
+    for t in transforms {
+        match t {
+            style::TransformFunction::Translate(x, y) => { tx += x; ty += y; }
+            style::TransformFunction::TranslateX(x) => { tx += x; }
+            style::TransformFunction::TranslateY(y) => { ty += y; }
+            style::TransformFunction::Matrix(_, _, _, _, e, f) => { tx += e; ty += f; }
+            _ => {}
+        }
+    }
+    (tx, ty)
 }
 
 /// Paint the outline of a box (rendered outside the border box).

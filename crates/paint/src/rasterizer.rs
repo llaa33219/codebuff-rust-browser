@@ -396,6 +396,7 @@ impl Framebuffer {
 struct RasterState {
     clip_stack: Vec<Rect>,
     opacity_stack: Vec<f32>,
+    transform_stack: Vec<(f32, f32)>,
     scroll_x: f32,
     scroll_y: f32,
 }
@@ -409,9 +410,15 @@ impl RasterState {
         *self.opacity_stack.last().unwrap_or(&1.0)
     }
 
-    /// Translate a document-space rect into screen space (subtract scroll offset).
+    fn current_transform(&self) -> (f32, f32) {
+        self.transform_stack.last().copied().unwrap_or((0.0, 0.0))
+    }
+
+    /// Translate a document-space rect into screen space (subtract scroll offset,
+    /// apply transform).
     fn to_screen(&self, r: &Rect) -> Rect {
-        Rect::new(r.x - self.scroll_x, r.y - self.scroll_y, r.w, r.h)
+        let (tx, ty) = self.current_transform();
+        Rect::new(r.x - self.scroll_x + tx, r.y - self.scroll_y + ty, r.w, r.h)
     }
 }
 
@@ -433,6 +440,7 @@ pub fn rasterize_display_list(
     let mut state = RasterState {
         clip_stack: vec![viewport],
         opacity_stack: vec![1.0],
+        transform_stack: Vec::new(),
         scroll_x,
         scroll_y,
     };
@@ -465,6 +473,7 @@ pub fn rasterize_display_list_with_font(
     let mut state = RasterState {
         clip_stack: vec![viewport],
         opacity_stack: vec![1.0],
+        transform_stack: Vec::new(),
         scroll_x,
         scroll_y,
     };
@@ -496,6 +505,7 @@ pub fn rasterize_display_list_with_font_and_images(
     let mut state = RasterState {
         clip_stack: vec![viewport],
         opacity_stack: vec![1.0],
+        transform_stack: Vec::new(),
         scroll_x,
         scroll_y,
     };
@@ -555,6 +565,7 @@ fn rasterize_item(
             let c = apply_opacity(color, opacity);
             let argb = color_to_argb(&c);
             let clip = state.current_clip();
+            let (t_tx, t_ty) = state.current_transform();
 
             if let Some(fe) = font_engine {
                 let clip_x0 = clip.x as i32;
@@ -563,8 +574,8 @@ fn rasterize_item(
                 let clip_y1 = (clip.y + clip.h).ceil() as i32;
 
                 for glyph in glyphs {
-                    let gx = glyph.x - state.scroll_x;
-                    let gy = glyph.y - state.scroll_y;
+                    let gx = glyph.x - state.scroll_x + t_tx;
+                    let gy = glyph.y - state.scroll_y + t_ty;
 
                     let codepoint = char::from_u32(glyph.glyph_id as u32).unwrap_or('\0');
                     let glyph_id = fe.cmap_lookup(codepoint);
@@ -586,8 +597,8 @@ fn rasterize_item(
                 let char_w = (*font_size * 0.55).ceil() as u32;
 
                 for glyph in glyphs {
-                    let gx = glyph.x - state.scroll_x;
-                    let gy = glyph.y - state.scroll_y - *font_size * 0.75;
+                    let gx = glyph.x - state.scroll_x + t_tx;
+                    let gy = glyph.y - state.scroll_y + t_ty - *font_size * 0.75;
 
                     let glyph_rect = Rect::new(gx, gy, char_w as f32, char_h as f32);
                     let clipped = clip_rect(&glyph_rect, &clip);
@@ -718,6 +729,17 @@ fn rasterize_item(
         DisplayItem::PopOpacity => {
             if state.opacity_stack.len() > 1 {
                 state.opacity_stack.pop();
+            }
+        }
+
+        DisplayItem::PushTransform { tx, ty } => {
+            let (cx, cy) = state.current_transform();
+            state.transform_stack.push((cx + tx, cy + ty));
+        }
+
+        DisplayItem::PopTransform => {
+            if !state.transform_stack.is_empty() {
+                state.transform_stack.pop();
             }
         }
     }
